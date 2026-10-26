@@ -152,6 +152,7 @@ typedef struct {
     uint8_t  badrun;                   /* bad codewords in a row inside the page  */
     uint8_t  excuse;                   /* samples were skipped during this sync
                                           codeword: it is taken as found          */
+    uint8_t  live;                     /* a good codeword came in this batch      */
     uint16_t ok;                       /* good codewords (key 3: per lane)        */
     uint16_t step;                     /* DPLL step of its lane (65536 per bit)    */
     uint16_t dup;                      /* half a codeword of its lane, in samples  */
@@ -366,6 +367,7 @@ static void codeword(sl_t *m,uint32_t cw){
         return;
     }
     m->ok++;
+    m->live=1;
     if(cw==IDLE){ closePage(m); return; }
     if(cw>>31){
         if(!m->has) return;
@@ -416,10 +418,13 @@ static void seqBit(sl_t *m,uint32_t b){
     if(m->word==BATCH_WORDS){
         /* The keys and the screen are served during a sync codeword, where no
          * page is lost: a sync that could not be read for that reason
-         * (excuse, set by listen()) is taken as found. */
-        if(ones(cw^SYNC)<=SYNC_ERR || m->excuse) m->word=0;
+         * (excuse, set by listen()) is taken as found, but only after a batch
+         * with a good codeword. A false sync in noise reads none: excused at
+         * every sync, it held the slicer in a batch for good, and the keys and
+         * the screen were served once a batch (0.45 s, 1.06 s at 512 bauds). */
+        if(ones(cw^SYNC)<=SYNC_ERR || (m->excuse && m->live)) m->word=0;
         else { closePage(m); m->word=HUNT; }
-        m->excuse=0;
+        m->excuse=m->live=0;
         return;
     }
     codeword(m,cw);
