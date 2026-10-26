@@ -52,8 +52,10 @@ so copy the required settings manually, especially `XTAL`.
 | Crystal correction (`XTAL`) | -50 to +50 `REG_3B` steps | +14 (+2.69 ppm) |
 | Mode / order | `STRAIGHT`, `PADDLE` / `DI-DA`, `DA-DI` | `STRAIGHT` / `DI-DA` |
 
-The status bar shows the title, `RX` while the transmitter is off, `TX OFF`
-when a transmission is refused, the speaker or `F` icon and the app version.
+The status bar shows the title, replaced by `TX OFF` when a transmission is
+refused and by `HELP` on the help page, the speaker or `F` icon and the app
+version. Since version 1.5 there is no `RX` label: it only followed the TX
+session, not the marks, and the red LED now shows each mark on the air (#716).
 A transmission is refused (`TX OFF`) when the resident firmware forbids TX on
 the frequency (TX lock outside the allowed bands), when the battery is too low
 or the voltage too high, or when the VFO is not in FM. Release every keying

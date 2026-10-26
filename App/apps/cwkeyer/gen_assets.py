@@ -20,7 +20,6 @@ if USB_VARIANT:
     a.table("T_VERSION", ["AUTO", "IAMB A", "IAMB B"], stride=16)
 else:
     a.text("T_VERSION", os.environ.get("APP_VER", "dev"))
-a.text("T_READY", "RX")
 a.text("T_DENIED", "TX OFF")
 a.table("T_MODE", ["STRAIGHT", "PADDLE"])
 a.table("T_ORDER", ["DI-DA", "DA-DI"])

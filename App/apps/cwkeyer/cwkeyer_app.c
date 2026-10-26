@@ -121,7 +121,6 @@ _Static_assert(SERVICE_MS > 0u && SERVICE_MS <= UINT8_MAX && BATTERY_MS % SERVIC
                "CW USB battery interval must fit in whole uint8_t ticks");
 #endif
 #define F_X                  72u
-#define STATE_X              43u
 #define TAG_LEFT_X            2u
 #define TAG_RIGHT_X          87u
 #define HELP_RIGHT_X         79u
@@ -492,23 +491,13 @@ static void drawBigFrequency(char *s)
 static void drawMainStatus(void)
 {
     const app_api_t *const a = A;
-#if CW_KEYER_USB
-    /* Reuse the title capsule for HELP / TX OFF instead of a second label.
-     * The glyph certifies the hold (states 4/5/6), not TX permission (6). */
+    /* HELP / TX OFF reuse the title capsule. TX is shown by the red LED
+     * on each mark (1.4), so there is no RX / TX label (#716). */
     drawStatus(g.help ? T_HELP : g.denied ? T_DENIED : T_TITLE, T_TITLE_CHARS);
+#if CW_KEYER_USB
+    /* The glyph certifies the hold (states 4/5/6), not TX permission (6). */
     a->asset_read(g.armState >= 4u ? BMP_READY : BMP_LOCK,
                   a->status_line + 32u, BMP_LOCK_LEN);
-#else
-    char t[TEXT_MAX];
-    drawStatus(T_TITLE, T_TITLE_CHARS);
-    if (g.denied || !g.txReady) {
-        const bool help = g.help, denied = g.denied;
-        text(t, help ? T_HELP : denied ? T_DENIED : T_READY);
-        a->print_inverse(t, STATE_X, 0u, true, true,
-                         (uint8_t)(STATE_X + (help ? T_HELP_LEN - 1u
-                                          : denied ? T_DENIED_LEN - 1u
-                                                   : T_READY_LEN - 1u) * 4u));
-    }
 #endif
     /* F is never armed on the help page; it shows no speaker icon. */
 #if CW_KEYER_USB
