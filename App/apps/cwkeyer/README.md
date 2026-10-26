@@ -5,6 +5,9 @@ VFO. It is entirely contained in the 4 KiB overlay and uses API level 3;
 it has no resident firmware component. This variant uses only PTT and
 SIDE1/SIDE2. External keys and paddles connected through USB-C are handled by
 the separate `CW USB` app. Both apps compile the same shared source.
+Since version 1.6, key `7` opens [`CW Mem`](../cwmem/README.md), a message
+keyer that sends stored messages with the same settings and hands back to the
+keyer when you touch a key.
 
 ## Requirements and install
 
@@ -41,6 +44,9 @@ so copy the required settings manually, especially `XTAL`.
 - `F`, then `2`, `3`, `4` or `6`: lower the corresponding setting instead.
 - `UP` / `DOWN`: tune the app frequency by a fixed 100 Hz CW step, up to
   +/-50 kHz. Holding a direction repeats after 400 ms, then every 100 ms.
+- `7`: open `CW Mem` with the current settings and UP/DOWN offset (see
+  [CW Mem](../cwmem/README.md)); without `CW Mem` installed, nothing
+  happens and the keyer stays open.
 - `MENU`: show the help page; `MENU` or `EXIT` returns to the keyer.
 - `EXIT`: leave the app.
 
@@ -61,10 +67,11 @@ the frequency (TX lock outside the allowed bands), when the battery is too low
 or the voltage too high, or when the VFO is not in FM. Release every keying
 control to clear it.
 
-The help page (`MENU`) lists the keys in two columns of capsules, as on
-CW Decode, with the 100 Hz tuning step at the bottom right. Opening it ends a
-semi-break-in hang and returns to RX; PTT and the paddles do not key the
-transmitter and the S-meter pauses until `MENU` or `EXIT` closes it.
+The help page (`MENU`) lists the keys in two columns of capsules over seven
+lines, as on CW Decode: the keys in order, and `UP/DN 100 Hz` for the tuning
+keys and their step. Opening it ends a semi-break-in hang and returns to RX; PTT and the paddles do
+not key the transmitter and the S-meter pauses until `MENU` or `EXIT` closes
+it.
 
 Keyer element timing is measured on the SysTick counter, so the keypad scan
 done at every poll (about 0.2 ms) does not stretch the elements. A contact
