@@ -131,7 +131,7 @@ remains available for navigation and operation.
 
 ### Overlay applications and APRS
 
-Fusion can store up to 64 applications from the current collection of 43 in
+Fusion can store up to 64 applications from the current collection of 44 in
 external Flash. Each app is loaded into a dedicated 4 KiB RAM overlay only
 while it is running, while larger read-only assets such as text, fonts, bitmaps
 and lookup tables remain in external Flash.
@@ -143,8 +143,8 @@ The current app collection includes:
 - digital and signal apps: ACARS RX, AIS RX, ATIS RX, ATIS DSC RX, APRS RX,
   APRS TX, APRS Edit, APRS DIGI, KISS TNC, CW Decode, CW Keyer, CW Trainer,
   CW USB, SSTV, POCSAG RX, Sonde M10, Sonde M20, Sonde RS41, GeoNav and EPIRB 406,
-- tools and diagnostics: AF Scope, AF Spectro, QR Map, Resistor, System Info and
-  Flash Map,
+- tools and diagnostics: ChannelBook, AF Scope, AF Spectro, QR Map, Resistor,
+  System Info and Flash Map,
 - games and demos: Breakout, Cube3D, Hell Maze, Minesweeper, Plasma, Rapid Roll,
   Snake, Sokoban, Space Impact and Tetris.
 
@@ -160,6 +160,12 @@ path-independent duplicate suppression and channel-busy protection.
 KISS TNC makes the radio the TNC of APRSdroid (or any KISS client) over the
 USB-C cable: the phone runs the APRS application, the radio demodulates and
 transmits.
+
+ChannelBook is a visual browser for the active Multiconfig memory bank. It groups
+channels by scan list, alphanumeric directory (`0-9`, `ABC` ... `WXYZ`, plus
+`NO NAME`) or 100-memory number ranges, provides direct memory-number access,
+and applies the selected channel to the current VFO with `MENU`. It resumes at
+the same directory, group and index/content level on the next launch.
 
 ACARS RX receives the 2400 bit/s AM-MSK aircraft data link, checks odd parity
 and CRC, and keeps a three-message history with aircraft address, flight ID,
