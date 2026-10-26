@@ -152,11 +152,11 @@ typedef struct {
     uint8_t  badrun;                   /* bad codewords in a row inside the page  */
     uint8_t  excuse;                   /* samples were skipped during this sync
                                           codeword: it is taken as found          */
-    uint8_t  live;                     /* a good codeword came in this batch      */
     uint16_t ok;                       /* good codewords (key 3: per lane)        */
     uint16_t step;                     /* DPLL step of its lane (65536 per bit)    */
     uint16_t dup;                      /* half a codeword of its lane, in samples  */
     uint8_t  lane;                     /* 0: 1200 bauds, 1: 512 bauds             */
+    uint8_t  live;                     /* a good codeword came in this batch      */
     char     text[MSG_MAX];
 } sl_t;
 
