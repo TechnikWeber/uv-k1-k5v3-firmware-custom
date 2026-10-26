@@ -26,6 +26,7 @@
 #include "driver/st7565.h"
 #include "driver/keyboard.h"
 #include "driver/system.h"
+#include "scheduler.h"
 #include "ui/helper.h"
 #ifdef ENABLE_FEAT_F4HWN_K5VIEWER
 #include "k5viewer.h"
@@ -71,7 +72,7 @@ static void app_invert_name(uint8_t line)
  * UP and DOWN held past the repeat delay are returned without waiting for the
  * release, again and again: a held key scrolls the list. The release that ends
  * such a hold returns nothing. */
-static KEY_Code_t app_get_key(void)
+static KEY_Code_t app_get_key(uint32_t *pressed_at)
 {
     static bool held;   /* the last key was returned by the repeat delay */
 #if defined(ENABLE_UART) || defined(ENABLE_USB)
@@ -116,6 +117,9 @@ static KEY_Code_t app_get_key(void)
             if (KEYBOARD_Poll() == key)
             {
                 BACKLIGHT_TurnOn();
+                /* Date the accepted press, not its eventual release. */
+                if (pressed_at)
+                    *pressed_at = SCHEDULER_GetTick10ms();
                 uint8_t wait = 0u;       /* 0: no repeat, wait for the release */
                 if (key == KEY_UP || key == KEY_DOWN)
                     wait = held ? APP_KEY_REPEAT_NEXT : APP_KEY_REPEAT_FIRST;
@@ -214,12 +218,13 @@ static void app_show_error(const app_header_t *header, uint8_t rc)
     ST7565_BlitStatusLine();
     ST7565_BlitFullScreen();
 
-    app_get_key();   /* blocking: dismiss on any key */
+    app_get_key(NULL);   /* blocking: dismiss on any key */
 }
 
 /* Five visible apps; line 0 holds the separator and line 6 the key hints. */
 #define APP_MENU_ROWS 5u
 #define APP_MENU_SLOT_COUNT APP_SLOT_COUNT
+#define APP_MENU_DIGIT_TIMEOUT 100u  /* 10 ms ticks: one second */
 
 _Static_assert(APP_MENU_SLOT_COUNT <= APP_SLOT_COUNT,
                "APP_MENU_SLOT_COUNT exceeds the physical app slot count");
@@ -282,6 +287,8 @@ void APP_MenuOpen(void)
     /* Right column: the code size, or the version after KEY_STAR. Kept across
      * menu openings, back to the size at power-on. */
     static bool show_version = false;
+    uint8_t digit = KEY_INVALID;
+    uint32_t digit_tick = 0u;
     APP_WaitKeyRelease();
 
     for (;;)
@@ -289,6 +296,7 @@ void APP_MenuOpen(void)
         const uint8_t current_revision = APP_SlotRevision();
         if (current_revision != slot_revision)
         {
+            digit = KEY_INVALID;
             const uint8_t previous_index = sel;
             const uint8_t previous_slot = installed_count > 0u
                 ? installed_slots[sel]
@@ -373,12 +381,42 @@ void APP_MenuOpen(void)
         K5VIEWER_Update(false);
 #endif
 
-        const KEY_Code_t key = app_get_key();
+        uint32_t key_tick = 0u;
+        const KEY_Code_t key = app_get_key(&key_tick);
+        if (key > KEY_9)
+            digit = KEY_INVALID;
         if (key == KEY_EXIT)
             return;
 
         switch (key)
         {
+            case KEY_0 ... KEY_9:
+            {
+                const uint32_t now = key_tick;
+                uint8_t index = installed_count;
+                if (digit != KEY_INVALID &&
+                    (uint32_t)(now - digit_tick) < APP_MENU_DIGIT_TIMEOUT)
+                {
+                    const uint8_t number = (uint8_t)(digit * 10u + key);
+                    if (number > 0u)
+                        index = app_find_slot(installed_slots, installed_count,
+                                              (uint8_t)(number - 1u));
+                }
+                if (index < installed_count)
+                    digit = KEY_INVALID;  /* A successful pair is complete. */
+                else
+                {
+                    if (key != KEY_0)
+                        index = app_find_slot(installed_slots, installed_count,
+                                              (uint8_t)(key - KEY_1));
+                    /* Even an empty single-digit slot can prefix an installed pair. */
+                    digit = (uint8_t)key;
+                    digit_tick = now;
+                }
+                if (index < installed_count)
+                    sel = index;
+                break;
+            }
             case KEY_UP:
                 if (installed_count > 0u)
                     sel = sel == 0u ? (uint8_t)(installed_count - 1u)

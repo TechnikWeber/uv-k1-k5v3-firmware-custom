@@ -131,6 +131,15 @@ remains available for navigation and operation.
 
 ### Overlay applications and APRS
 
+In the Apps menu, use `UP` / `DOWN` or type the displayed slot number to select
+an installed app, then press `MENU` to run it. A digit selects its slot
+immediately. A second digit entered in less than one second first tries the
+two-digit slot (for example, `1` then `2` selects `12`); if it is not installed,
+the second digit is tried on its own. Uninstalled slots leave the selection
+unchanged. Even if slot `01` is empty, `1` then `2` can still select `12`.
+A successful pair completes the number; a non-digit key or a one-second pause
+starts a new number. `*` toggles app size / version, and `EXIT` closes the menu.
+
 Fusion can store up to 64 applications from the current collection of 44 in
 external Flash. Each app is loaded into a dedicated 4 KiB RAM overlay only
 while it is running, while larger read-only assets such as text, fonts, bitmaps
@@ -143,10 +152,6 @@ The current app collection includes:
 - digital and signal apps: ACARS RX, AIS RX, ATIS RX, ATIS DSC RX, APRS RX,
   APRS TX, APRS Edit, APRS DIGI, KISS TNC, CW Decode, CW Keyer, CW Mem,
   CW Mem Edit, CW Trainer, CW USB, SSTV, POCSAG RX, Sonde M10, Sonde M20, Sonde RS41, GeoNav and EPIRB 406,
-- tools and diagnostics: AF Scope, AF Spectro, QR Map, Resistor, System Info and
-  Flash Map,
-  APRS TX, APRS Edit, APRS DIGI, KISS TNC, CW Decode, CW Keyer, CW Trainer,
-  CW USB, SSTV, POCSAG RX, Sonde M10, Sonde M20, Sonde RS41, GeoNav and EPIRB 406,
 - tools and diagnostics: ChannelBook, AF Scope, AF Spectro, QR Map, Resistor,
   System Info and Flash Map,
 - games and demos: Breakout, Cube3D, Hell Maze, Minesweeper, Plasma, Rapid Roll,
