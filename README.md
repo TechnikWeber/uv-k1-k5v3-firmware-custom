@@ -141,8 +141,8 @@ The current app collection includes:
 - radio tools: Broadcast FM, Fox Hunt, Beacon, Beam, Signal Finder, Spectrum3D
   and ToneCall,
 - digital and signal apps: ACARS RX, AIS RX, ATIS RX, ATIS DSC RX, APRS RX,
-  APRS TX, APRS Edit, APRS DIGI, KISS TNC, CW Decode, CW Keyer, CW Trainer,
-  CW USB, SSTV, POCSAG RX, Sonde M10, Sonde M20, Sonde RS41, GeoNav and EPIRB 406,
+  APRS TX, APRS Edit, APRS DIGI, KISS TNC, CW Decode, CW Keyer, CW Mem,
+  CW Mem Edit, CW Trainer, CW USB, SSTV, POCSAG RX, Sonde M10, Sonde M20, Sonde RS41, GeoNav and EPIRB 406,
 - tools and diagnostics: AF Scope, AF Spectro, QR Map, Resistor, System Info and
   Flash Map,
 - games and demos: Breakout, Cube3D, Hell Maze, Minesweeper, Plasma, Rapid Roll,
