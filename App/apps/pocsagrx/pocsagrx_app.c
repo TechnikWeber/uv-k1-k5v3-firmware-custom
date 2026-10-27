@@ -656,9 +656,11 @@ static void listen(void){
     memset(box8,0,sizeof box8);
     for(unsigned k=0;k<NLANE*NSL;k++){
         sl_t *m=&sl[k];
-        m->num=(uint8_t)(2u+k%NSL);       /* 2/8, 3/8, 4/8 in each lane */
-        m->word=HUNT;
         m->lane=(uint8_t)(k>=NSL);
+        /* 2/8, 3/8, 4/8 in each lane; k - lane*NSL instead of k % NSL, which
+         * pulled libgcc's 266-byte unsigned division into the app */
+        m->num=(uint8_t)(2u+k-(m->lane?NSL:0u));
+        m->word=HUNT;
         m->step=(uint16_t)(m->lane?STEP_512:STEP_1200);
         m->dup=(uint16_t)(m->lane?DUP_512:DUP_1200);
     }
