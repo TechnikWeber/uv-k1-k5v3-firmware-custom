@@ -24,7 +24,7 @@
 #define CFG_REC        64u
 #define CFG_SLOTS      (MSG_FLASH_SECTOR / CFG_REC)
 #define CFG_MAGIC      0xC7u
-#define CFG_VERSION    1u
+#define CFG_VERSION    2u
 
 typedef struct {
     uint8_t      magic;
@@ -46,6 +46,8 @@ _Static_assert(sizeof(cfg_rec_t) <= CFG_REC, "settings record fits its slot");
 #define NO_VFO_RETRY_MS    30000u
 #define DEDUPE_WINDOW_MS   (15u * 60u * 1000u)
 #define COPY_WINDOW_MS     20000u   /* a copy through another digipeater    */
+#define BLN_WINDOW_MS      (6u * 3600u * 1000u)   /* bulletins are repeated for hours */
+#define BCAST_REPEAT_MS    60000u   /* the second transmission of a broadcast */
 #define DEDUPE_SLOTS       16u
 #define ACK_QUEUE          4u
 
@@ -74,7 +76,16 @@ typedef struct {
     uint32_t at;
 } seen_t;
 
+typedef struct {
+    bool     active;
+    uint8_t  sends;
+    int16_t  slot;
+    uint32_t due;
+    char     to[APRS_ADDRESSEE_LEN + 1];   /* "BLN3FAMIL" */
+} bcast_t;
+
 static msg_config_t    gCfg;
+static bcast_t         gBc[2];
 static int16_t         gCfgSlot = -1;
 static pending_t       gOut[MSG_OUTBOX_MAX];
 static ack_t           gAck[ACK_QUEUE];
@@ -140,17 +151,29 @@ void MSG_ConfigDefaults(msg_config_t *cfg)
     cfg->enabled = 0;
     cfg->path    = MSG_PATH_WIDE1_WIDE2;
     cfg->beacon  = MSG_BEACON_30;
-    cfg->beep    = 1;
+    cfg->beep    = MSG_BEEP_ALL;
     cfg->audio   = 0;
     cfg->freq    = MSG_DEFAULT_FREQ;
     cfg->next_id = 1;
     strcpy(cfg->status, "UV-K5 messenger");
 }
 
+static bool group_valid(const char *g)
+{
+    uint8_t n = 0;
+    for (; n <= MSG_GROUP_LEN && g[n]; n++)
+        if (!((g[n] >= 'A' && g[n] <= 'Z') || (g[n] >= '0' && g[n] <= '9')))
+            return false;
+    return n <= MSG_GROUP_LEN;
+}
+
 static bool cfg_valid(const msg_config_t *c)
 {
     ax25_addr_t a;
     if (c->call[0] && !ax25_addr_parse(c->call, &a))
+        return false;
+    if (!group_valid(c->group) || c->beep >= MSG_BEEP_COUNT || c->bulletins > 1u
+        || c->next_bln > 9u)
         return false;
     return c->ssid <= 15u && c->path < MSG_PATH_COUNT && c->beacon < MSG_BEACON_COUNT
         && c->freq >= 1800000u && c->freq <= 130000000u
@@ -241,6 +264,7 @@ void MSG_CoreInit(void)
     cfg_load();
     mbx_init();
     memset(gOut, 0, sizeof gOut);
+    memset(gBc, 0, sizeof gBc);
     memset(gSeen, 0, sizeof gSeen);
     gAckCount   = 0;
     gHoldoffAt  = 0;
@@ -262,7 +286,8 @@ typedef enum {
 
 /* Copies of one message arrive through several digipeaters within seconds;
  * the sender's own retries come 30 s or more apart. */
-static seen_t_kind seen_check(const char *from, const char *id, const char *text, uint32_t now)
+static seen_t_kind seen_check(const char *from, const char *id, const char *text, uint32_t now,
+                              uint32_t window)
 {
     uint32_t h = fnv(2166136261u, from);
     h = fnv(h, id);
@@ -270,7 +295,7 @@ static seen_t_kind seen_check(const char *from, const char *id, const char *text
         h = fnv(h, text);              /* no number: the text tells copies apart */
     const uint32_t stamp = now ? now : 1u;
     for (uint8_t i = 0; i < DEDUPE_SLOTS; i++) {
-        if (gSeen[i].at && gSeen[i].hash == h && now - gSeen[i].at < DEDUPE_WINDOW_MS) {
+        if (gSeen[i].at && gSeen[i].hash == h && now - gSeen[i].at < window) {
             const bool copy = now - gSeen[i].at < COPY_WINDOW_MS;
             gSeen[i].at = stamp;
             return copy ? SEEN_COPY : SEEN_RETRY;
@@ -322,6 +347,51 @@ static void outcome(const char *peer, const char *id, uint8_t flag)
         mbx_set_flags(s, flag);
 }
 
+static char upper(char c)
+{
+    return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+}
+
+/* "BLN" + line (0-9: bulletin, A-Z: announcement) + optional group of up to
+ * 5 characters. Returns true when the frame was a bulletin (kept or not). */
+static bool handle_bulletin(const aprs_msg_t *m, const ax25_addr_t *me, uint32_t now)
+{
+    const char *to = m->to;
+    if (upper(to[0]) != 'B' || upper(to[1]) != 'L' || upper(to[2]) != 'N' || !to[3])
+        return false;
+
+    char group[MSG_GROUP_LEN + 1];
+    uint8_t n = 0;
+    for (const char *g = to + 4; *g && n < MSG_GROUP_LEN; g++)
+        group[n++] = upper(*g);
+    group[n] = '\0';
+
+    msg_notify_t kind;
+    if (group[0]) {
+        if (!gCfg.group[0] || strcmp(group, gCfg.group) != 0)
+            return true;               /* another group */
+        kind = MSG_NOTIFY_CHANNEL;
+    } else {
+        if (!gCfg.bulletins)
+            return true;
+        kind = MSG_NOTIFY_PUBLIC;
+    }
+    if (ax25_addr_equal(&m->from, me) || !m->text[0])
+        return true;
+
+    char from[AX25_CALL_STR];
+    ax25_addr_format(&m->from, from);
+    char key[AX25_CALL_STR + MSG_GROUP_LEN + 2];   /* "DL1ABC-9#GROUP": no number, */
+    strcpy(key, from);                              /* so the text tells them apart */
+    strcat(key, "#");
+    strcat(key, group);
+    if (seen_check(key, "", m->text, now, BLN_WINDOW_MS) != SEEN_NEW)
+        return true;
+    if (mbx_append(MBX_DIR_BC_IN, from, group, m->text) != MBX_NONE)
+        msg_port_notify(kind);
+    return true;
+}
+
 static void handle_frame(const uint8_t *buf, uint16_t len, uint32_t now)
 {
     ax25_frame_t f;
@@ -335,6 +405,8 @@ static void handle_frame(const uint8_t *buf, uint16_t len, uint32_t now)
 
     aprs_msg_t m;
     aprs_msg_parse(&f, &m);
+    if (m.kind == APRS_MSG_TEXT && handle_bulletin(&m, &me, now))
+        return;
     if (m.kind == APRS_MSG_NONE || !aprs_msg_is_for(&m, &me))
         return;
     if (ax25_addr_equal(&m.from, &me))
@@ -347,12 +419,12 @@ static void handle_frame(const uint8_t *buf, uint16_t len, uint32_t now)
     case APRS_MSG_TEXT: {
         if (m.reply_ack[0])
             outcome(from, m.reply_ack, MBX_F_DELIVERED);
-        const seen_t_kind seen = seen_check(from, m.id, m.text, now);
+        const seen_t_kind seen = seen_check(from, m.id, m.text, now, DEDUPE_WINDOW_MS);
         if (m.id[0] && seen != SEEN_COPY)
             queue_ack(from, m.id);
         if (m.text[0] && seen == SEEN_NEW) {
             if (mbx_append(MBX_DIR_IN, from, m.id, m.text) != MBX_NONE)
-                msg_port_notify();
+                msg_port_notify(MSG_NOTIFY_PRIVATE);
         }
         break;
     }
@@ -451,6 +523,52 @@ msg_send_result_t MSG_Resend(int16_t slot)
     return MSG_SEND_OK;
 }
 
+void MSG_ChannelName(char *out)
+{
+    out[0] = '#';
+    strcpy(out + 1, gCfg.group[0] ? gCfg.group : "ALL");
+}
+
+msg_send_result_t MSG_SendBroadcast(const char *group, const char *text)
+{
+    ax25_addr_t me;
+    if (!gCfg.enabled)
+        return MSG_SEND_DISABLED;
+    if (!MSG_MyAddr(&me))
+        return MSG_SEND_NO_CALL;
+    if (!text[0])
+        return MSG_SEND_EMPTY;
+    if (!group_valid(group))
+        return MSG_SEND_BAD_CALL;
+    bcast_t *b = !gBc[0].active ? &gBc[0] : !gBc[1].active ? &gBc[1] : NULL;
+    if (!b)
+        return MSG_SEND_OUTBOX_FULL;
+
+    char mine[AX25_CALL_STR], clean[APRS_TEXT_MAX + 1];
+    ax25_addr_format(&me, mine);
+    uint8_t n = 0;
+    for (; text[n] && n < APRS_TEXT_MAX; n++) {
+        const char c = text[n];
+        clean[n] = (c == '|' || c == '~' || c == '{' || c < 0x20 || c > 0x7E) ? '-' : c;
+    }
+    clean[n] = '\0';
+
+    b->to[0] = 'B'; b->to[1] = 'L'; b->to[2] = 'N';
+    b->to[3] = (char)('0' + gCfg.next_bln);
+    strcpy(b->to + 4, group);
+    gCfg.next_bln = (uint8_t)((gCfg.next_bln + 1u) % 10u);
+    cfg_save();
+
+    const int16_t slot = mbx_append(MBX_DIR_BC_OUT, mine, group, clean);
+    if (slot == MBX_NONE)
+        return MSG_SEND_FLASH;
+    b->active = true;
+    b->sends  = 0;
+    b->slot   = slot;
+    b->due    = msg_port_ms();
+    return MSG_SEND_OK;
+}
+
 uint8_t MSG_OutboxCount(void)
 {
     uint8_t n = 0;
@@ -461,6 +579,12 @@ uint8_t MSG_OutboxCount(void)
 
 bool MSG_SlotPending(int16_t slot, uint8_t *tries)
 {
+    for (uint8_t i = 0; i < 2u; i++)
+        if (gBc[i].active && gBc[i].slot == slot) {
+            if (tries)
+                *tries = gBc[i].sends;
+            return true;
+        }
     for (uint8_t i = 0; i < MSG_OUTBOX_MAX; i++)
         if (gOut[i].active && gOut[i].slot == slot) {
             if (tries)
@@ -476,7 +600,15 @@ uint16_t        MSG_FramesSent(void)   { return gSent; }
 
 /* ------------------------------------------------------------ transmit -- */
 
-typedef enum { TX_NONE = 0, TX_ACK, TX_MSG, TX_BEACON } tx_kind_t;
+typedef enum { TX_NONE = 0, TX_ACK, TX_MSG, TX_BCAST, TX_BEACON } tx_kind_t;
+
+static bcast_t *due_bcast(uint32_t now)
+{
+    for (uint8_t i = 0; i < 2u; i++)
+        if (gBc[i].active && time_reached(now, gBc[i].due))
+            return &gBc[i];
+    return NULL;
+}
 
 static pending_t *due_message(uint32_t now)
 {
@@ -498,7 +630,7 @@ static bool beacon_due(uint32_t now)
 bool MSG_TxPending(void)
 {
     const uint32_t now = msg_port_ms();
-    return gCfg.enabled && (gAckCount || due_message(now) || beacon_due(now));
+    return gCfg.enabled && (gAckCount || due_message(now) || due_bcast(now) || beacon_due(now));
 }
 
 static uint16_t build_frame(const char *info, uint16_t info_len)
@@ -515,7 +647,7 @@ static uint16_t build_frame(const char *info, uint16_t info_len)
     return ax25_build_ui(gFrame, sizeof gFrame, &dst, &me, path, npath, info, info_len);
 }
 
-static void transmit_one(tx_kind_t kind, pending_t *p, uint32_t now)
+static void transmit_one(tx_kind_t kind, pending_t *p, bcast_t *b, uint32_t now)
 {
     uint16_t info = 0;
     if (kind == TX_ACK) {
@@ -526,6 +658,14 @@ static void transmit_one(tx_kind_t kind, pending_t *p, uint32_t now)
             info = aprs_msg_format_text(gInfo, sizeof gInfo, r.peer, r.text, r.id);
         if (!info) {                   /* the record is gone: give up on it */
             p->active = false;
+            return;
+        }
+    } else if (kind == TX_BCAST) {
+        mbx_rec_t r;
+        if (mbx_read(b->slot, &r))
+            info = aprs_msg_format_text(gInfo, sizeof gInfo, b->to, r.text, NULL);
+        if (!info) {
+            b->active = false;
             return;
         }
     } else {
@@ -556,6 +696,16 @@ static void transmit_one(tx_kind_t kind, pending_t *p, uint32_t now)
             p->tries++;
         } else {
             p->due = now + NO_VFO_RETRY_MS;   /* no try lost without a VFO */
+        }
+        break;
+    case TX_BCAST:
+        if (res == MSG_TX_OK) {
+            if (++b->sends >= MSG_BCAST_SENDS)
+                b->active = false;
+            else
+                b->due = now + BCAST_REPEAT_MS;
+        } else {
+            b->due = now + NO_VFO_RETRY_MS;
         }
         break;
     case TX_BEACON:
@@ -603,10 +753,13 @@ void MSG_Task(void)
 
     tx_kind_t kind = TX_NONE;
     pending_t *p = NULL;
+    bcast_t *b = NULL;
     if (gAckCount)
         kind = TX_ACK;
     else if ((p = due_message(now)) != NULL)
         kind = TX_MSG;
+    else if ((b = due_bcast(now)) != NULL)
+        kind = TX_BCAST;
     else if (beacon_due(now))
         kind = TX_BEACON;
     if (kind == TX_NONE) {
@@ -629,5 +782,5 @@ void MSG_Task(void)
     if (gTokens < 1000u || (gEverTx && now - gLastTx < TX_GAP_MS))
         return;
     gHoldoffAt = 0;
-    transmit_one(kind, p, now);
+    transmit_one(kind, p, b, now);
 }

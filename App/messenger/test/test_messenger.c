@@ -25,7 +25,8 @@ static int      tx_n;
 uint32_t msg_port_ms(void)     { return now_ms; }
 uint32_t msg_port_random(void) { rnd = rnd * 1103515245u + 12345u; return rnd >> 8; }
 bool     msg_port_channel_clear(void) { return clear; }
-void     msg_port_notify(void) { notified++; }
+static msg_notify_t last_kind;
+void     msg_port_notify(msg_notify_t kind) { notified++; last_kind = kind; }
 
 bool msg_port_take_frame(uint8_t *buf, uint16_t *len)
 {
@@ -346,6 +347,79 @@ static void test_beacon_and_limits(void)
     CHECK_INT(sim_violations, 0);
 }
 
+static void test_broadcast(void)
+{
+    reset_all();
+    msg_config_t c = *MSG_GetConfig();
+    strcpy(c.group, "WEBER");
+    MSG_SetConfig(&c);
+
+    /* own channel: stored, no ack, channel notification */
+    rx("DL1ABC-9", ":BLN0WEBER:Essen ist fertig");
+    run_ms(5000);
+    CHECK_INT(mbx_count(), 1);
+    CHECK_INT(notified, 1);
+    CHECK_INT(last_kind, MSG_NOTIFY_CHANNEL);
+    CHECK_INT(tx_n, 0);
+    mbx_rec_t r;
+    CHECK(mbx_read(mbx_newest(), &r));
+    CHECK_INT(r.dir, MBX_DIR_BC_IN);
+    CHECK_STR(r.id, "WEBER");
+    CHECK_STR(r.peer, "DL1ABC-9");
+    CHECK_STR(r.text, "Essen ist fertig");
+
+    /* the same bulletin repeated an hour later: not again; a new text: yes */
+    run_ms(3600000);
+    rx("DL1ABC-9", ":BLN0WEBER:Essen ist fertig");
+    rx("DL1ABC-9", ":BLN1WEBER:Kommt ihr?");
+    run_ms(100);
+    CHECK_INT(mbx_count(), 2);
+
+    /* another group, public bulletins while they are off, from myself */
+    rx("DL2XYZ", ":BLN0OTHER:not ours");
+    rx("DB0ABC", ":BLN3     :Clubabend Freitag");
+    rx("DL4PW-7", ":BLN0WEBER:my own, repeated");
+    run_ms(100);
+    CHECK_INT(mbx_count(), 2);
+
+    /* public bulletins on */
+    c = *MSG_GetConfig();
+    c.bulletins = 1;
+    MSG_SetConfig(&c);
+    rx("DB0ABC", ":BLNA     :Contest am Sonntag");
+    run_ms(100);
+    CHECK_INT(mbx_count(), 3);
+    CHECK_INT(last_kind, MSG_NOTIFY_PUBLIC);
+    CHECK(mbx_read(mbx_newest(), &r));
+    CHECK_STR(r.id, "");
+
+    /* sending into the channel: twice, a minute apart, no ack wanted */
+    CHECK_INT(MSG_SendBroadcast("WEBER", "Bin gleich da"), MSG_SEND_OK);
+    const int16_t s = mbx_newest();
+    CHECK(MSG_SlotPending(s, NULL));
+    run_ms(5000);
+    CHECK_INT(tx_n, 1);
+    CHECK_STR(tx_log[0], "DL4PW-7>APZK5M,WIDE1-1,WIDE2-1::BLN0WEBER:Bin gleich da");
+    run_ms(70000);
+    CHECK_INT(tx_n, 2);
+    CHECK_STR(tx_log[1], "DL4PW-7>APZK5M,WIDE1-1,WIDE2-1::BLN0WEBER:Bin gleich da");
+    CHECK(!MSG_SlotPending(s, NULL));
+    run_ms(300000);
+    CHECK_INT(tx_n, 2);
+
+    /* public broadcast, the next bulletin line */
+    CHECK_INT(MSG_SendBroadcast("", "Hallo alle"), MSG_SEND_OK);
+    run_ms(5000);
+    CHECK_STR(tx_log[2], "DL4PW-7>APZK5M,WIDE1-1,WIDE2-1::BLN1     :Hallo alle");
+    CHECK_INT(MSG_SendBroadcast("BAD-1", "x"), MSG_SEND_BAD_CALL);
+
+    /* a private message still beats it */
+    rx("DL1ABC-9", ":DL4PW-7  :privat{3");
+    run_ms(100);
+    CHECK_INT(last_kind, MSG_NOTIFY_PRIVATE);
+    CHECK_INT(sim_violations, 0);
+}
+
 int main(void)
 {
     test_config();
@@ -354,5 +428,6 @@ int main(void)
     test_send_acked();
     test_channel_and_errors();
     test_beacon_and_limits();
+    test_broadcast();
     return TEST_REPORT("messenger");
 }

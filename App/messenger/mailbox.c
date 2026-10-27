@@ -52,12 +52,13 @@ static int16_t slot_prev(int16_t s) { return (int16_t)((s + (int16_t)MBX_SLOTS -
 static bool read_hdr(int16_t slot, hdr_t *h)
 {
     msg_flash_read(slot_addr(slot), h, HDR_SIZE);
-    return h->commit == MBX_COMMIT && h->dir <= MBX_DIR_OUT && h->text_len <= APRS_TEXT_BUF;
+    return h->commit == MBX_COMMIT && h->dir <= MBX_DIR_MAX && h->text_len <= APRS_TEXT_BUF;
 }
 
 static bool is_unread(const hdr_t *h)
 {
-    return h->dir == MBX_DIR_IN && (h->flags & MBX_F_READ) && (h->flags & MBX_F_DELETED);
+    return (h->dir == MBX_DIR_IN || h->dir == MBX_DIR_BC_IN)
+        && (h->flags & MBX_F_READ) && (h->flags & MBX_F_DELETED);
 }
 
 static uint8_t crc8(const mbx_rec_t *r)
@@ -172,7 +173,7 @@ int16_t mbx_append(uint8_t dir, const char *peer, const char *id, const char *te
         gSeqNext++;
         gNewest = slot;
         gCount++;
-        if (dir == MBX_DIR_IN)
+        if (dir == MBX_DIR_IN || dir == MBX_DIR_BC_IN)
             gUnread++;
         return slot;
     }
@@ -184,7 +185,7 @@ bool mbx_read(int16_t slot, mbx_rec_t *rec)
     if (slot < 0 || slot >= (int16_t)MBX_SLOTS)
         return false;
     msg_flash_read(slot_addr(slot), rec, MBX_REC_SIZE);
-    if (rec->commit != MBX_COMMIT || rec->dir > MBX_DIR_OUT || rec->text_len > APRS_TEXT_BUF
+    if (rec->commit != MBX_COMMIT || rec->dir > MBX_DIR_MAX || rec->text_len > APRS_TEXT_BUF
         || rec->crc != crc8(rec))
         return false;
     rec->peer[sizeof rec->peer - 1u] = '\0';

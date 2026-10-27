@@ -33,6 +33,7 @@
 #define ROW_CHARS   18u        /* small font: 7 px per character */
 #define LIST_ROWS   5u         /* lines 1-5 */
 #define POPUP_MS    1500u
+#define THREAD_LEN  (AX25_CALL_STR + 1u)
 
 typedef enum {
     V_LIST = 0,
@@ -41,6 +42,7 @@ typedef enum {
     V_TEXT,
     V_SETUP,
     V_EDIT_CALL,
+    V_EDIT_GROUP,
     V_EDIT_STATUS,
     V_CONFIRM,
 } view_t;
@@ -48,28 +50,31 @@ typedef enum {
 typedef enum { CONFIRM_DELETE = 0, CONFIRM_CLEAR } confirm_t;
 
 enum {
-    S_ENABLE = 0, S_CALL, S_SSID, S_FREQ, S_PATH, S_BEACON, S_STATUS, S_BEEP, S_AUDIO, S_CLEAR,
+    S_ENABLE = 0, S_CALL, S_SSID, S_CHANNEL, S_PUBLIC, S_BEEP, S_FREQ, S_PATH, S_BEACON,
+    S_STATUS, S_AUDIO, S_CLEAR,
     S_COUNT
 };
 
 static const char *const SETUP_LABEL[S_COUNT] = {
-    "Messenger", "Call", "SSID", "Freq", "Path", "Beacon", "Status", "Beep", "APRS audio",
-    "Clear mailbox",
+    "Messenger", "Call", "SSID", "Channel", "Public BLN", "Beep", "Freq", "Path", "Beacon",
+    "Status", "APRS audio", "Clear mailbox",
 };
 
 static const uint32_t FREQS[] = {14480000u, 14439000u, 14464000u, 14466000u, 14517500u, 14582500u};
 #define FREQ_COUNT (sizeof FREQS / sizeof FREQS[0])
 
 static const char *const PATH_TXT[MSG_PATH_COUNT] = {"DIRECT", "WIDE1", "WIDE1+2"};
+static const char *const BEEP_TXT[MSG_BEEP_COUNT] = {"OFF", "ALL", "PRIVATE"};
 
 static view_t    gView;
-static view_t    gBack;          /* where a confirm or popup returns to       */
+static view_t    gBack;          /* where a confirm returns to                */
 static confirm_t gConfirm;
 static int16_t   gSel = MBX_NONE, gTop = MBX_NONE;
+static char      gThread[THREAD_LEN];   /* chat filter: "DL1ABC-9" or "#GROUP", "" = all */
 static uint8_t   gReadTop;       /* first text row shown in V_READ            */
 static uint8_t   gSetupSel, gSetupTop;
 static t9_t      gEdit;
-static char      gTo[AX25_CALL_STR];
+static char      gTo[THREAD_LEN];       /* recipient: a call, or "#GROUP" / "#ALL" */
 static char      gPopup[20];
 static uint32_t  gPopupUntil;
 
@@ -165,14 +170,64 @@ static void draw_popup(void)
     }
 }
 
+/* --------------------------------------------------------- records ---- */
+
+static bool is_broadcast(const mbx_rec_t *r)
+{
+    return r->dir == MBX_DIR_BC_IN || r->dir == MBX_DIR_BC_OUT;
+}
+
+/* The conversation a record belongs to: the other station, or "#GROUP". */
+static void thread_of(const mbx_rec_t *r, char *out)
+{
+    if (is_broadcast(r)) {
+        out[0] = '#';
+        strcpy(out + 1, r->id[0] ? r->id : "ALL");
+    } else {
+        strcpy(out, r->peer);
+    }
+}
+
+static bool matches(int16_t slot)
+{
+    if (!gThread[0])
+        return true;
+    mbx_rec_t r;
+    char t[THREAD_LEN];
+    if (!mbx_read(slot, &r))
+        return false;
+    thread_of(&r, t);
+    return strcmp(t, gThread) == 0;
+}
+
+static int16_t older(int16_t s)
+{
+    do s = mbx_older(s); while (s != MBX_NONE && !matches(s));
+    return s;
+}
+
+static int16_t newer(int16_t s)
+{
+    do s = mbx_newer(s); while (s != MBX_NONE && !matches(s));
+    return s;
+}
+
+static int16_t newest(void)
+{
+    int16_t s = mbx_newest();
+    return (s == MBX_NONE || matches(s)) ? s : older(s);
+}
+
 /* ----------------------------------------------------------- list ---- */
 
 static char mark_of(int16_t slot, const mbx_rec_t *r)
 {
-    if (r->dir == MBX_DIR_IN)
+    if (r->dir == MBX_DIR_IN || r->dir == MBX_DIR_BC_IN)
         return (r->flags & MBX_F_READ) ? '*' : ' ';   /* bit still set: unread */
     if (MSG_SlotPending(slot, NULL))
         return '>';
+    if (r->dir == MBX_DIR_BC_OUT)
+        return ' ';
     if (!(r->flags & MBX_F_DELIVERED))
         return '+';
     if (!(r->flags & MBX_F_FAILED))
@@ -183,16 +238,21 @@ static char mark_of(int16_t slot, const mbx_rec_t *r)
 static void draw_list(void)
 {
     char head[ROW_CHARS + 1];
-    char *o = head;
-    memcpy(o, "MESSAGES", 8);
-    o += 8;
-    const uint16_t unread = mbx_unread();
-    if (unread) {
-        *o++ = ' ';
-        o = put_u(o, unread);
-        memcpy(o, " new", 5);
+    if (gThread[0]) {
+        strcpy(head, "Chat ");
+        strcat(head, gThread);
     } else {
-        *o = '\0';
+        char *o = head;
+        memcpy(o, "MESSAGES", 8);
+        o += 8;
+        const uint16_t unread = mbx_unread();
+        if (unread) {
+            *o++ = ' ';
+            o = put_u(o, unread);
+            memcpy(o, " new", 5);
+        } else {
+            *o = '\0';
+        }
     }
     title(head);
 
@@ -202,19 +262,29 @@ static void draw_list(void)
         print("* write  F setup", 0, 4);
     } else {
         int16_t s = gTop;
-        for (uint8_t row = 0; row < LIST_ROWS && s != MBX_NONE; row++, s = mbx_older(s)) {
+        for (uint8_t row = 0; row < LIST_ROWS && s != MBX_NONE; row++, s = older(s)) {
             mbx_rec_t r;
             char line[ROW_CHARS + 1];
             if (!mbx_read(s, &r)) {
                 strcpy(line, " (damaged)");
             } else {
+                /* mark, who (9), text; broadcasts: the text starts with '#',
+                 * the ones sent show the channel instead of a call */
+                char who[THREAD_LEN];
+                if (r.dir == MBX_DIR_BC_OUT)
+                    thread_of(&r, who);
+                else
+                    strcpy(who, r.peer);
                 memset(line, ' ', ROW_CHARS);
                 line[0] = mark_of(s, &r);
-                const size_t pl = strlen(r.peer);
-                memcpy(line + 1, r.peer, pl > 9u ? 9u : pl);
+                const size_t pl = strlen(who);
+                memcpy(line + 1, who, pl > 9u ? 9u : pl);
+                uint8_t x = 11;
+                if (r.dir == MBX_DIR_BC_IN)
+                    line[x++] = '#';
                 const size_t tl = strlen(r.text);
-                const size_t room = ROW_CHARS - 11u;
-                memcpy(line + 11, r.text, tl < room ? tl : room);
+                const size_t room = ROW_CHARS - x;
+                memcpy(line + x, r.text, tl < room ? tl : room);
                 line[ROW_CHARS] = '\0';
             }
             print(line, 0, (uint8_t)(1u + row));
@@ -227,32 +297,34 @@ static void draw_list(void)
         char warn[32] = "NO VFO ON ";
         freq_text(cfg->freq, warn + strlen(warn));
         tiny(warn, 0, 6);
+    } else if (gThread[0]) {
+        tiny("MENU READ  * WRITE  EXIT ALL", 0, 6);
     } else {
-        tiny("MENU READ  * NEW  F SETUP", 0, 6);
+        tiny("MENU READ * NEW 1 CHAT F SETUP", 0, 6);
     }
 }
 
 static void list_reset(void)
 {
-    gSel = gTop = mbx_newest();
+    gSel = gTop = newest();
 }
 
 static void list_down(void)
 {
     if (gSel == MBX_NONE)
         return;
-    const int16_t next = mbx_older(gSel);
+    const int16_t next = older(gSel);
     if (next == MBX_NONE)
         return;
     /* is gSel the last visible row? then scroll */
     int16_t s = gTop;
     uint8_t row = 0;
     while (s != MBX_NONE && s != gSel && row < LIST_ROWS) {
-        s = mbx_older(s);
+        s = older(s);
         row++;
     }
     if (row >= LIST_ROWS - 1u)
-        gTop = mbx_older(gTop);
+        gTop = older(gTop);
     gSel = next;
 }
 
@@ -260,7 +332,7 @@ static void list_up(void)
 {
     if (gSel == MBX_NONE)
         return;
-    const int16_t prev = mbx_newer(gSel);
+    const int16_t prev = newer(gSel);
     if (prev == MBX_NONE)
         return;
     if (gSel == gTop)
@@ -298,9 +370,15 @@ static void draw_read(void)
         print("(damaged)", 0, 2);
         return;
     }
-    char head[ROW_CHARS + 1];
-    strcpy(head, r.dir == MBX_DIR_IN ? "From " : "To ");
-    strcat(head, r.peer);
+    char head[ROW_CHARS + 8];
+    char chan[THREAD_LEN];
+    thread_of(&r, chan);
+    switch (r.dir) {
+    case MBX_DIR_IN:    strcpy(head, "From "); strcat(head, r.peer); break;
+    case MBX_DIR_OUT:   strcpy(head, "To ");   strcat(head, r.peer); break;
+    case MBX_DIR_BC_IN: strcpy(head, r.peer);  strcat(head, " "); strcat(head, chan); break;
+    default:            strcpy(head, "To ");   strcat(head, chan); break;
+    }
     title(head);
 
     uint8_t starts[8];
@@ -321,24 +399,41 @@ static void draw_read(void)
         print(line, 0, (uint8_t)(1u + i));
     }
 
-    if (r.dir == MBX_DIR_IN) {
-        tiny("MENU REPLY   0 DELETE", 0, 6);
-        return;
-    }
-    char st[32];
+    char st[40];
     uint8_t tries;
-    if (MSG_SlotPending(gSel, &tries)) {
-        char *o = st;
-        memcpy(o, "SENDING ", 8);
-        o = put_u(o + 8, tries);
-        *o++ = '/';
-        o = put_u(o, MSG_RETRIES);
-    } else if (!(r.flags & MBX_F_DELIVERED)) {
-        strcpy(st, "DELIVERED    0 DELETE");
-    } else if (!(r.flags & MBX_F_FAILED)) {
-        strcpy(st, "NO ACK  MENU RESEND");
-    } else {
-        strcpy(st, "NOT CONFIRMED MENU RESEND");
+    switch (r.dir) {
+    case MBX_DIR_IN:
+        strcpy(st, "MENU REPLY   0 DELETE");
+        break;
+    case MBX_DIR_BC_IN:
+        strcpy(st, "MENU CHANNEL F PRIVATE 0 DEL");
+        break;
+    case MBX_DIR_BC_OUT:
+        if (MSG_SlotPending(gSel, &tries)) {
+            char *o = st;
+            memcpy(o, "SENDING ", 8);
+            o = put_u(o + 8, tries);
+            *o++ = '/';
+            put_u(o, MSG_BCAST_SENDS);
+        } else {
+            strcpy(st, "SENT, NO ACK  0 DELETE");
+        }
+        break;
+    default:
+        if (MSG_SlotPending(gSel, &tries)) {
+            char *o = st;
+            memcpy(o, "SENDING ", 8);
+            o = put_u(o + 8, tries);
+            *o++ = '/';
+            put_u(o, MSG_RETRIES);
+        } else if (!(r.flags & MBX_F_DELIVERED)) {
+            strcpy(st, "DELIVERED    0 DELETE");
+        } else if (!(r.flags & MBX_F_FAILED)) {
+            strcpy(st, "NO ACK  MENU RESEND");
+        } else {
+            strcpy(st, "NOT CONFIRMED MENU RESEND");
+        }
+        break;
     }
     tiny(st, 0, 6);
 }
@@ -396,6 +491,11 @@ static void draw_compose(void)
         title("NEW MESSAGE");
         print("To (callsign):", 0, 2);
         draw_editor(3, 1);
+        /* the tiny font has no clear '#': spell the channel out */
+        const char *g = MSG_GetConfig()->group;
+        strcpy(hint, "F = CHANNEL ");
+        strcat(hint, g[0] ? g : "ALL");
+        tiny(hint, 0, 5);
         strcpy(hint, "MENU NEXT  * ");
         strcat(hint, t9_mode_name(&gEdit));
         tiny(hint, 0, 6);
@@ -428,7 +528,11 @@ static void send_now(void)
         [MSG_SEND_FLASH]       = "Flash error",
         [MSG_SEND_DISABLED]    = "Messenger off",
     };
-    const msg_send_result_t r = MSG_Send(gTo, gEdit.buf);
+    msg_send_result_t r;
+    if (gTo[0] == '#')                 /* "#GROUP", "#ALL" = public */
+        r = MSG_SendBroadcast(strcmp(gTo, "#ALL") == 0 ? "" : gTo + 1, gEdit.buf);
+    else
+        r = MSG_Send(gTo, gEdit.buf);
     popup(ERR[r]);
     if (r == MSG_SEND_OK) {
         gView = V_LIST;
@@ -443,19 +547,21 @@ static void setup_value(uint8_t item, char *v)
     const msg_config_t *c = MSG_GetConfig();
     v[0] = '\0';
     switch (item) {
-    case S_ENABLE: strcpy(v, c->enabled ? "ON" : "OFF"); break;
-    case S_CALL:   strcpy(v, c->call[0] ? c->call : "---"); break;
-    case S_SSID:   if (c->ssid) put_u(v, c->ssid); else strcpy(v, "none"); break;
-    case S_FREQ:   freq_text(c->freq, v); break;
-    case S_PATH:   strcpy(v, PATH_TXT[c->path]); break;
+    case S_ENABLE:  strcpy(v, c->enabled ? "ON" : "OFF"); break;
+    case S_CALL:    strcpy(v, c->call[0] ? c->call : "---"); break;
+    case S_SSID:    if (c->ssid) put_u(v, c->ssid); else strcpy(v, "none"); break;
+    case S_CHANNEL: if (c->group[0]) { v[0] = '#'; strcpy(v + 1, c->group); } else strcpy(v, "none"); break;
+    case S_PUBLIC:  strcpy(v, c->bulletins ? "ON" : "OFF"); break;
+    case S_BEEP:    strcpy(v, BEEP_TXT[c->beep]); break;
+    case S_FREQ:    freq_text(c->freq, v); break;
+    case S_PATH:    strcpy(v, PATH_TXT[c->path]); break;
     case S_BEACON:
         strcpy(v, MSG_BeaconMinutesText(c->beacon));
         if (c->beacon)
             strcat(v, " min");
         break;
-    case S_STATUS: strncpy(v, c->status, 8); v[8] = '\0'; break;
-    case S_BEEP:   strcpy(v, c->beep ? "ON" : "OFF"); break;
-    case S_AUDIO:  strcpy(v, c->audio ? "ON" : "OFF"); break;
+    case S_STATUS:  strncpy(v, c->status, 8); v[8] = '\0'; break;
+    case S_AUDIO:   strcpy(v, c->audio ? "ON" : "OFF"); break;
     default: break;
     }
 }
@@ -494,6 +600,13 @@ static void draw_setup(void)
     tiny(diag, 0, 6);
 }
 
+static void open_setup(uint8_t sel)
+{
+    gSetupSel = sel;
+    gSetupTop = sel >= LIST_ROWS ? (uint8_t)(sel - LIST_ROWS + 1u) : 0u;
+    gView = V_SETUP;
+}
+
 static void setup_change(int8_t dir)
 {
     msg_config_t c = *MSG_GetConfig();
@@ -504,13 +617,29 @@ static void setup_change(int8_t dir)
             return;
         }
         c.enabled = !c.enabled;
-        break;
+        MSG_SetConfig(&c);
+        if (c.enabled && !msg_port_has_aprs_vfo()) {
+            char t[20] = "VFO to ";
+            freq_text(c.freq, t + strlen(t));
+            popup(t);
+        }
+        return;
     case S_CALL:
         t9_init(&gEdit, AX25_CALL_LEN, true, c.call);
         gView = V_EDIT_CALL;
         return;
     case S_SSID:
         c.ssid = (uint8_t)((c.ssid + 16 + dir) % 16);
+        break;
+    case S_CHANNEL:
+        t9_init(&gEdit, MSG_GROUP_LEN, true, c.group);
+        gView = V_EDIT_GROUP;
+        return;
+    case S_PUBLIC:
+        c.bulletins = !c.bulletins;
+        break;
+    case S_BEEP:
+        c.beep = (uint8_t)((c.beep + MSG_BEEP_COUNT + dir) % MSG_BEEP_COUNT);
         break;
     case S_FREQ: {
         uint8_t i = 0;
@@ -530,8 +659,9 @@ static void setup_change(int8_t dir)
         t9_init(&gEdit, MSG_STATUS_LEN, false, c.status);
         gView = V_EDIT_STATUS;
         return;
-    case S_BEEP:  c.beep = !c.beep; break;
-    case S_AUDIO: c.audio = !c.audio; break;
+    case S_AUDIO:
+        c.audio = !c.audio;
+        break;
     case S_CLEAR:
         gConfirm = CONFIRM_CLEAR;
         gBack = V_SETUP;
@@ -545,9 +675,14 @@ static void setup_change(int8_t dir)
 
 static void draw_edit_setting(void)
 {
-    title(gView == V_EDIT_CALL ? "YOUR CALLSIGN" : "BEACON STATUS");
-    print(gView == V_EDIT_CALL ? "Without SSID:" : "Status text:", 0, 2);
-    draw_editor(3, gView == V_EDIT_CALL ? 1u : 2u);
+    static const char *const TITLE[] = {"YOUR CALLSIGN", "CHANNEL", "BEACON STATUS"};
+    static const char *const LABEL[] = {"Without SSID:", "1-5 letters/digits", "Status text:"};
+    const uint8_t k = (uint8_t)(gView - V_EDIT_CALL);
+    title(TITLE[k]);
+    print(LABEL[k], 0, 2);
+    draw_editor(3, gView == V_EDIT_STATUS ? 2u : 1u);
+    if (gView == V_EDIT_GROUP)
+        tiny("EMPTY = NO CHANNEL", 0, 5);
     char hint[40] = "MENU SAVE  * ";
     strcat(hint, t9_mode_name(&gEdit));
     tiny(hint, 0, 6);
@@ -557,6 +692,7 @@ static void save_edit_setting(void)
 {
     t9_commit(&gEdit);
     msg_config_t c = *MSG_GetConfig();
+    const view_t from = gView;
     if (gView == V_EDIT_CALL) {
         ax25_addr_t a;
         if (gEdit.len && (!ax25_addr_parse(gEdit.buf, &a) || a.ssid || strchr(gEdit.buf, '-'))) {
@@ -566,11 +702,25 @@ static void save_edit_setting(void)
         strcpy(c.call, gEdit.buf);
         if (!c.call[0])
             c.enabled = 0;
+    } else if (gView == V_EDIT_GROUP) {
+        for (uint8_t i = 0; i < gEdit.len; i++)
+            if (gEdit.buf[i] == '-') {
+                popup("Letters, digits");
+                return;
+            }
+        if (strcmp(gEdit.buf, "ALL") == 0) {
+            popup("ALL is reserved");
+            return;
+        }
+        strcpy(c.group, gEdit.buf);
     } else {
         strcpy(c.status, gEdit.buf);
     }
     MSG_SetConfig(&c);
-    gView = V_SETUP;
+    /* first setup: from the callsign on to "Messenger ON" */
+    open_setup(from == V_EDIT_CALL && !c.enabled ? (uint8_t)S_ENABLE
+               : from == V_EDIT_CALL ? (uint8_t)S_CALL
+               : from == V_EDIT_GROUP ? (uint8_t)S_CHANNEL : (uint8_t)S_STATUS);
 }
 
 /* -------------------------------------------------------- confirm ---- */
@@ -587,9 +737,15 @@ static void draw_confirm(void)
 
 void MSG_OpenScreen(void)
 {
-    gView = V_LIST;
     gPopupUntil = 0;
-    list_reset();
+    gThread[0] = '\0';
+    if (!MSG_GetConfig()->call[0]) {   /* first start: the callsign first */
+        t9_init(&gEdit, AX25_CALL_LEN, true, NULL);
+        gView = V_EDIT_CALL;
+    } else {
+        gView = V_LIST;
+        list_reset();
+    }
     GUI_SelectNextDisplay(DISPLAY_MESSENGER);
 }
 
@@ -603,6 +759,7 @@ void MSG_DisplayScreen(void)
     case V_TEXT:        draw_compose(); break;
     case V_SETUP:       draw_setup(); break;
     case V_EDIT_CALL:
+    case V_EDIT_GROUP:
     case V_EDIT_STATUS: draw_edit_setting(); break;
     case V_CONFIRM:     draw_confirm(); break;
     }
@@ -616,7 +773,7 @@ static void open_read(void)
     if (gSel == MBX_NONE)
         return;
     mbx_rec_t r;
-    if (mbx_read(gSel, &r) && r.dir == MBX_DIR_IN)
+    if (mbx_read(gSel, &r) && (r.flags & MBX_F_READ))
         mbx_set_flags(gSel, MBX_F_READ);
     gReadTop = 0;
     gView = V_READ;
@@ -636,6 +793,17 @@ static void keys_editor(KEY_Code_t key, bool held)
     case KEY_DOWN: t9_right(&gEdit); break;
     default: break;
     }
+}
+
+static bool editing(void)
+{
+    return gView == V_TO || gView == V_TEXT || gView == V_EDIT_CALL || gView == V_EDIT_GROUP
+        || gView == V_EDIT_STATUS;
+}
+
+static view_t editor_exit(void)
+{
+    return (gView == V_TO || gView == V_TEXT) ? V_LIST : V_SETUP;
 }
 
 void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
@@ -660,19 +828,77 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
     gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;
     gUpdateDisplay = true;
 
+    if (editing()) {
+        if (Key == KEY_EXIT) {
+            if (held) {                /* long EXIT: leave the editor */
+                gView = editor_exit();
+                if (gView == V_LIST)
+                    list_reset();
+            } else if (gEdit.len || t9_pending(&gEdit)) {
+                t9_backspace(&gEdit);
+            } else if (gView == V_TEXT && gTo[0] != '#') {
+                t9_init(&gEdit, AX25_CALL_STR - 1u, true, gTo);   /* back to the recipient */
+                gView = V_TO;
+            } else {
+                gView = editor_exit();
+                if (gView == V_LIST)
+                    list_reset();
+            }
+            return;
+        }
+        if (gView == V_TO && Key == KEY_F) {       /* to the channel */
+            MSG_ChannelName(gTo);
+            t9_init(&gEdit, APRS_TEXT_MAX, false, NULL);
+            gView = V_TEXT;
+            return;
+        }
+        if (Key == KEY_MENU) {
+            if (gView == V_TO) {
+                t9_commit(&gEdit);
+                ax25_addr_t a;
+                if (!ax25_addr_parse(gEdit.buf, &a) || a.repeated) {
+                    popup("Bad callsign");
+                    return;
+                }
+                ax25_addr_format(&a, gTo);
+                t9_init(&gEdit, APRS_TEXT_MAX, false, NULL);
+                gView = V_TEXT;
+            } else if (gView == V_TEXT) {
+                send_now();
+            } else {
+                save_edit_setting();
+            }
+            return;
+        }
+        keys_editor(Key, held);
+        return;
+    }
+
     switch (gView) {
     case V_LIST:
         switch (Key) {
         case KEY_UP:   list_up(); break;
         case KEY_DOWN: list_down(); break;
         case KEY_MENU: open_read(); break;
-        case KEY_STAR: open_compose(NULL); break;
+        case KEY_STAR: open_compose(gThread[0] ? gThread : NULL); break;
+        case KEY_1: {                  /* the conversation of the selected message */
+            mbx_rec_t r;
+            if (!gThread[0] && gSel != MBX_NONE && mbx_read(gSel, &r)) {
+                thread_of(&r, gThread);
+                list_reset();
+            }
+            break;
+        }
         case KEY_F:
-            gSetupSel = gSetupTop = 0;
-            gView = V_SETUP;
+            open_setup(S_ENABLE);
             break;
         case KEY_EXIT:
-            GUI_SelectNextDisplay(DISPLAY_MAIN);
+            if (gThread[0]) {          /* back to all messages */
+                gThread[0] = '\0';
+                list_reset();
+            } else {
+                GUI_SelectNextDisplay(DISPLAY_MAIN);
+            }
             break;
         default: break;
         }
@@ -689,9 +915,18 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
                 break;
             if (r.dir == MBX_DIR_IN) {
                 open_compose(r.peer);
-            } else if (!MSG_SlotPending(gSel, NULL) && (r.flags & MBX_F_DELIVERED)) {
+            } else if (r.dir == MBX_DIR_BC_IN) {
+                char chan[THREAD_LEN];
+                thread_of(&r, chan);
+                open_compose(chan);    /* answer in the same channel */
+            } else if (r.dir == MBX_DIR_OUT && !MSG_SlotPending(gSel, NULL)
+                       && (r.flags & MBX_F_DELIVERED)) {
                 popup(MSG_Resend(gSel) == MSG_SEND_OK ? "Sending again" : "Cannot send");
             }
+            break;
+        case KEY_F:
+            if (ok && r.dir == MBX_DIR_BC_IN)
+                open_compose(r.peer);  /* private answer to a broadcast */
             break;
         case KEY_0:
             gConfirm = CONFIRM_DELETE;
@@ -705,44 +940,6 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         }
         break;
     }
-
-    case V_TO:
-    case V_TEXT:
-    case V_EDIT_CALL:
-    case V_EDIT_STATUS:
-        if (Key == KEY_EXIT) {
-            if (held) {                /* long EXIT: leave the editor */
-                gView = (gView == V_EDIT_CALL || gView == V_EDIT_STATUS) ? V_SETUP : V_LIST;
-            } else if (gEdit.len || t9_pending(&gEdit)) {
-                t9_backspace(&gEdit);
-            } else if (gView == V_TEXT) {
-                t9_init(&gEdit, AX25_CALL_STR - 1u, true, gTo);   /* back to the recipient */
-                gView = V_TO;
-            } else {
-                gView = (gView == V_EDIT_CALL || gView == V_EDIT_STATUS) ? V_SETUP : V_LIST;
-            }
-            break;
-        }
-        if (Key == KEY_MENU) {
-            if (gView == V_TO) {
-                t9_commit(&gEdit);
-                ax25_addr_t a;
-                if (!ax25_addr_parse(gEdit.buf, &a) || a.repeated) {
-                    popup("Bad callsign");
-                    break;
-                }
-                ax25_addr_format(&a, gTo);
-                t9_init(&gEdit, APRS_TEXT_MAX, false, NULL);
-                gView = V_TEXT;
-            } else if (gView == V_TEXT) {
-                send_now();
-            } else {
-                save_edit_setting();
-            }
-            break;
-        }
-        keys_editor(Key, held);
-        break;
 
     case V_SETUP:
         switch (Key) {
@@ -771,17 +968,25 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
             if (gConfirm == CONFIRM_CLEAR) {
                 mbx_clear();
                 popup("Mailbox cleared");
+                gThread[0] = '\0';
                 list_reset();
                 gView = V_SETUP;
             } else {
                 mbx_set_flags(gSel, MBX_F_DELETED | MBX_F_READ);
                 list_reset();
+                if (gSel == MBX_NONE && gThread[0]) {   /* the chat is empty now */
+                    gThread[0] = '\0';
+                    list_reset();
+                }
                 gView = V_LIST;
             }
             gUpdateStatus = true;
         } else if (Key == KEY_EXIT) {
             gView = gBack;
         }
+        break;
+
+    default:
         break;
     }
 }
@@ -791,8 +996,7 @@ void msg_ui_tick(void)
     if (gScreenToDisplay != DISPLAY_MESSENGER)
         return;
     const uint32_t now = msg_port_ms();
-    if ((gView == V_TO || gView == V_TEXT || gView == V_EDIT_CALL || gView == V_EDIT_STATUS)
-        && t9_tick(&gEdit, now))
+    if (editing() && t9_tick(&gEdit, now))
         gUpdateDisplay = true;
     if (gPopupUntil && (int32_t)(now - gPopupUntil) >= 0) {
         gPopupUntil = 0;

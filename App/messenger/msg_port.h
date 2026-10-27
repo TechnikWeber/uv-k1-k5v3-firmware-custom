@@ -40,7 +40,13 @@ bool            msg_port_take_frame(uint8_t *buf, uint16_t *len);
 bool            msg_port_channel_clear(void);
 /* Sends one frame on the APRS frequency, blocking (~1 s). */
 msg_tx_result_t msg_port_transmit(const uint8_t *frame, uint16_t len);
-/* A new message arrived: beep, backlight, status bar. */
-void            msg_port_notify(void);
+typedef enum {
+    MSG_NOTIFY_PRIVATE = 0,           /* a message to this station          */
+    MSG_NOTIFY_CHANNEL,               /* a broadcast in the own channel     */
+    MSG_NOTIFY_PUBLIC,                /* a public bulletin                  */
+} msg_notify_t;
+
+/* A new message arrived: beep (as set), backlight, status bar. */
+void            msg_port_notify(msg_notify_t kind);
 
 #endif

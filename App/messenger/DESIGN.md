@@ -111,6 +111,14 @@ or too high, non-FM modulation, serial configuration in progress.
   240 s apart, then 120 s for the last ack, then failed. Without an APRS VFO a
   try is not used up (retried every 30 s). Message numbers 1-999, stored with
   the settings.
+- **Broadcasts (channels):** APRS group bulletins `BLNnGROUP` (n = 0-9,
+  rotating, so APRS clients that keep one line per number show them all).
+  Received when GROUP is the own channel, or without a group when public
+  bulletins are on; duplicates within 6 h are dropped (bulletins are often
+  repeated for hours). Sent twice, 60 s apart; no ack exists for bulletins.
+  Stored as their own record types, the group in the id field.
+- **Notifications:** private messages beep with Beep ALL or PRIVATE, channel
+  broadcasts with ALL, public bulletins never (envelope only).
 - **Beacon:** status frame `>text`, 20 s after switching on, then every
   10/20/30/60 min (default 30). No position.
 - **Scheduler:** the channel must be clear (APRS VFO, squelch closed or squelch
@@ -136,10 +144,10 @@ contents but stays safe (CRC per record).
 
 | | Fusion | Messenger |
 |---|---|---|
-| Flash | 106 400 B (88 %) | 114 928 B (95 %) |
-| RAM | 12 160 B (74 %) | 13 888 B (85 %) |
+| Flash | 106 400 B (88 %) | 117 240 B (97 %) |
+| RAM | 12 160 B (74 %) | 13 952 B (85 %) |
 
-The messenger is ~17 KB of code (screens 5 KB, logic 3 KB, demodulator 1.2 KB);
+The messenger is ~19 KB of code (screens 5 KB, logic 3 KB, demodulator 1.2 KB);
 the spectrum analyser (~9 KB) was dropped to make room. RAM: 3 slicers with
 200-byte buffers, 512-byte DMA buffer, one frame slot. Worst stack depth of the
 messenger ~700 bytes (`-fstack-usage`).

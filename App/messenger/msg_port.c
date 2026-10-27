@@ -53,6 +53,7 @@ static uint32_t gBusyUntil;
 static uint32_t gRand = 0x6D2B79F5u;
 static bool     gReady;
 static bool     gNotify;
+static msg_notify_t gNotifyKind;
 static uint8_t  gAfTick;
 
 /* ------------------------------------------------------------ flash -- */
@@ -221,8 +222,10 @@ msg_tx_result_t msg_port_transmit(const uint8_t *frame, uint16_t len)
     return r;
 }
 
-void msg_port_notify(void)
+void msg_port_notify(msg_notify_t kind)
 {
+    if (!gNotify || kind < gNotifyKind)
+        gNotifyKind = kind;            /* private beats channel beats public */
     gNotify = true;
 }
 
@@ -278,11 +281,16 @@ void MSG_TimeSlice10ms(void)
 
     if (gNotify) {
         gNotify = false;
-        BACKLIGHT_TurnOn();
         gUpdateStatus = true;
         if (gScreenToDisplay == DISPLAY_MESSENGER)
             gUpdateDisplay = true;
-        if (cfg->beep)
+        /* public bulletins only show the envelope */
+        if (gNotifyKind != MSG_NOTIFY_PUBLIC)
+            BACKLIGHT_TurnOn();
+        const bool beep = cfg->beep == MSG_BEEP_ALL     ? gNotifyKind != MSG_NOTIFY_PUBLIC
+                        : cfg->beep == MSG_BEEP_PRIVATE ? gNotifyKind == MSG_NOTIFY_PRIVATE
+                        : false;
+        if (beep)
             play_notify();
     }
 

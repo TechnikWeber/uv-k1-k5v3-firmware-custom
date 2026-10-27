@@ -104,7 +104,7 @@ static int      rx_n;
 uint32_t msg_port_ms(void) { return now_ms; }
 uint32_t msg_port_random(void) { static uint32_t r = 7; r = r * 1103515245u + 12345u; return r >> 8; }
 bool     msg_port_channel_clear(void) { return true; }
-void     msg_port_notify(void) {}
+void     msg_port_notify(msg_notify_t kind) { (void)kind; }
 bool     msg_port_has_aprs_vfo(void) { return true; }
 msg_tx_result_t msg_port_transmit(const uint8_t *f, uint16_t l) { (void)f; (void)l; now_ms += 1000; return MSG_TX_OK; }
 
@@ -209,71 +209,72 @@ int main(int argc, char **argv)
     g_out = argc > 1 ? argv[1] : ".";
     sim_reset(0xFF);
     MSG_CoreInit();
-    msg_config_t c = *MSG_GetConfig();
-    strcpy(c.call, "DL4PW");
-    c.ssid = 7;
-    c.enabled = 1;
-    c.beacon = MSG_BEACON_OFF;
-    MSG_SetConfig(&c);
 
-    /* history: one sent and acknowledged, one still waiting */
+    /* first start: no callsign yet */
+    MSG_OpenScreen();
+    type("3 555 ");                    /* D L */
+    key(KEY_STAR);                     /* 123 */
+    key(KEY_4);
+    key(KEY_STAR);                     /* ABC */
+    type("7 9 ");                      /* P W */
+    shot("01_first_start");
+    key(KEY_MENU);                     /* saved: on to "Messenger" */
+    key(KEY_MENU);                     /* ON */
+    key(KEY_DOWN);                     /* Call */
+    key(KEY_DOWN);                     /* SSID: 0 -> 7 */
+    for (int i = 0; i < 7; i++)
+        key(KEY_MENU);
+    key(KEY_DOWN);                     /* Channel */
+    key(KEY_MENU);
+    type("9 33 22 33 777 ");           /* W E B E R */
+    key(KEY_MENU);
+    shot("02_setup");
+
+    /* history */
     MSG_Send("DL3QQQ", "Bin unterwegs, melde mich spaeter");
     run_ms(4000);
     rx("DL3QQQ", ":DL4PW-7  :ack1");
     run_ms(100);
-    MSG_Send("DL5ZZZ-7", "Treffen 18 Uhr am Bahnhof?");
-    run_ms(4000);
-    rx("DB0XYZ-10", "}DL2XYZ-5>APDR16,TCPIP,DB0XYZ-10*::DL4PW-7  :Gruesse aus Muenchen{a1");
-    run_ms(100);
     rx("DL1ABC-9", ":DL4PW-7  :Hallo Philipp, bist du heute Abend QRV auf 145.500?{12");
     run_ms(4000);
+    rx("DL5ZZZ-7", ":BLN0WEBER:Essen um 19 Uhr, wer kommt?");
+    run_ms(4000);
+    MSG_Send("DL1ABC-9", "Ja gerne!");
+    run_ms(4000);
+    rx("DL1ABC-9", ":DL4PW-7  :ack2");
+    run_ms(100);
+    rx("DL1ABC-9", ":DL4PW-7  :Super, bis dann{13");
+    run_ms(4000);
 
-    MSG_OpenScreen();
-    shot("01_list");
+    key(KEY_EXIT);
+    shot("03_list");
 
+    key(KEY_DOWN); key(KEY_DOWN);      /* the channel message */
     key(KEY_MENU);
-    shot("02_read");
-
-    key(KEY_MENU);                     /* reply */
-    type("5 2 ");                      /* J a */
-    key(KEY_0);
-    type("4 33 777 66 33");            /* g e r n e (last letter still pending) */
-    shot("03_reply_typing");
+    shot("04_read_channel");
+    key(KEY_MENU);                     /* answer in the channel */
+    type("444 222 44 0 22 444 66 0 3 2 22 33 444");
     run_ms(1100);
-    key(KEY_1); key(KEY_1); key(KEY_1); key(KEY_1);   /* ! */
-    run_ms(1100);
-    shot("04_reply_done");
-
-    key(KEY_MENU);                     /* send */
-    shot("05_queued");
+    shot("05_write_channel");
+    key(KEY_MENU);
     run_ms(2000);
-    shot("06_list_after");
 
-    key(KEY_DOWN); key(KEY_DOWN); key(KEY_DOWN);
+    key(KEY_DOWN);                     /* "Super, bis dann" */
+    key(KEY_1);                        /* chat with DL1ABC-9 */
+    shot("06_chat");
+    key(KEY_DOWN);                     /* "Ja gerne!" */
     key(KEY_MENU);
-    shot("07_read_pending");
+    shot("07_read_delivered");
     key(KEY_EXIT);
-    key(KEY_DOWN);
-    key(KEY_MENU);
-    shot("08_read_delivered");
-    key(KEY_EXIT);
-
-    key(KEY_STAR);                     /* new message: recipient */
-    type("3 555 ");                    /* D L */
-    key(KEY_STAR);                     /* 123 */
-    key(KEY_1);
-    key(KEY_STAR);                     /* ABC */
-    type("2 22 222 ");                 /* A B C */
-    shot("09_new_to");
-    key(KEY_MENU);
-    shot("10_new_text");
+    key(KEY_STAR);                     /* write in the chat: straight to the text */
+    type("666 55 0 22 444 7777 0 4 555 33 444 222 44");   /* Ok bis gleich */
+    run_ms(1100);
+    shot("08_write_private");
     key_long(KEY_EXIT);
+    key(KEY_EXIT);                     /* leave the chat */
 
-    key(KEY_F);                        /* setup */
-    shot("11_setup");
-    for (int i = 0; i < 6; i++)
-        key(KEY_DOWN);
-    shot("12_setup_more");
+    key(KEY_STAR);                     /* new: recipient, F = channel */
+    shot("09_new_to");
 
     return TEST_REPORT("ui_sim");
 }

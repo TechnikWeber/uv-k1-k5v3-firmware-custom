@@ -20,7 +20,9 @@ answer them later, typing on the number keys.
   short beep for new mail.
 - **Standard APRS messaging:** automatic acks, retries until acknowledged,
   reply-acks, messages from the Internet through iGates.
-- **Multi-tap text entry** on the number keys.
+- **Channels like Meshtastic:** broadcasts to everyone in your group (APRS
+  group bulletins), optional public bulletins, a chat view per station or channel.
+- **Multi-tap text entry** on the number keys; asks for your callsign on first use.
 - **Status beacon** (no position), so iGates know where to route your messages.
 
 Build with `cmake --preset Messenger && cmake --build --preset Messenger`.

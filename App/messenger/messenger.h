@@ -32,10 +32,13 @@
 #define MSG_TOCALL        "APZK5M"      /* APZ: experimental software      */
 #define MSG_OUTBOX_MAX    4u            /* messages waiting for an ack     */
 #define MSG_RETRIES       5u            /* transmissions of one message    */
+#define MSG_GROUP_LEN     5u            /* channel = APRS bulletin group   */
+#define MSG_BCAST_SENDS   2u            /* a broadcast goes out twice      */
 
 enum { MSG_PATH_DIRECT = 0, MSG_PATH_WIDE1, MSG_PATH_WIDE1_WIDE2, MSG_PATH_COUNT };
 enum { MSG_BEACON_OFF = 0, MSG_BEACON_10, MSG_BEACON_20, MSG_BEACON_30, MSG_BEACON_60,
        MSG_BEACON_COUNT };
+enum { MSG_BEEP_OFF = 0, MSG_BEEP_ALL, MSG_BEEP_PRIVATE, MSG_BEEP_COUNT };
 
 typedef struct {
     char     call[AX25_CALL_LEN + 1];   /* "" until the user sets it        */
@@ -43,12 +46,14 @@ typedef struct {
     uint8_t  enabled;                   /* background reception on/off      */
     uint8_t  path;                      /* MSG_PATH_*                       */
     uint8_t  beacon;                    /* MSG_BEACON_*                     */
-    uint8_t  beep;                      /* beep on a new message            */
+    uint8_t  beep;                      /* MSG_BEEP_*                       */
     uint8_t  audio;                     /* APRS bursts on the speaker       */
-    uint8_t  reserved;
+    uint8_t  bulletins;                 /* public bulletins (BLNn, BLNx) too */
     uint32_t freq;                      /* APRS frequency, 10 Hz units      */
     uint16_t next_id;                   /* message number, 1..999           */
     char     status[MSG_STATUS_LEN + 1];/* beacon text                      */
+    char     group[MSG_GROUP_LEN + 1];  /* own channel, "" = none           */
+    uint8_t  next_bln;                  /* bulletin line 0..9 for the next broadcast */
 } msg_config_t;
 
 typedef enum {
@@ -73,6 +78,11 @@ bool               MSG_MyAddr(ax25_addr_t *out);
 
 /* Queues a new message (stored in the outbox at once). */
 msg_send_result_t  MSG_Send(const char *to, const char *text);
+/* A broadcast: group bulletin "BLNnGROUP", or a public bulletin "BLNn" for
+ * group "". Not acknowledged; sent twice. */
+msg_send_result_t  MSG_SendBroadcast(const char *group, const char *text);
+/* "#GROUP" for the own channel, "#ALL" without one. */
+void               MSG_ChannelName(char *out);
 /* Sends a retry of an outgoing message now (from the mailbox). */
 msg_send_result_t  MSG_Resend(int16_t slot);
 

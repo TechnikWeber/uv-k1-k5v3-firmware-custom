@@ -45,8 +45,11 @@
 #define MBX_PER_SECTOR      (MSG_FLASH_SECTOR / MBX_REC_SIZE)
 #define MBX_SLOTS           (MBX_LOG_SECTORS * MBX_PER_SECTOR)   /* 480 */
 
-#define MBX_DIR_IN          0u
-#define MBX_DIR_OUT         1u
+#define MBX_DIR_IN          0u      /* private message to this station      */
+#define MBX_DIR_OUT         1u      /* private message from this station    */
+#define MBX_DIR_BC_IN       2u      /* broadcast (bulletin) heard; id = group */
+#define MBX_DIR_BC_OUT      3u      /* broadcast sent;             id = group */
+#define MBX_DIR_MAX         MBX_DIR_BC_OUT
 
 /* flags: a bit cleared means the state is set (erased flash = 0xFF) */
 #define MBX_F_READ          0x01u   /* incoming: opened by the user           */
@@ -62,8 +65,9 @@ typedef struct {
     uint8_t  dir;                   /* MBX_DIR_*                              */
     uint8_t  text_len;
     uint32_t seq;                   /* grows by one per record                */
-    char     peer[AX25_CALL_STR];   /* sender (in) or recipient (out)         */
-    char     id[APRS_ID_MAX + 1];   /* message number                         */
+    char     peer[AX25_CALL_STR];   /* sender (in) or recipient (out); for a
+                                       broadcast sent: the own station         */
+    char     id[APRS_ID_MAX + 1];   /* message number; broadcasts: the group  */
     uint8_t  crc;                   /* CRC-8 over dir..text                   */
     uint8_t  reserved[3];
     char     text[APRS_TEXT_BUF];
