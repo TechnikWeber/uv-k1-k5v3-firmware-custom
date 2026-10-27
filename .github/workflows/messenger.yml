@@ -1,0 +1,80 @@
+name: Messenger firmware
+
+# Builds the Messenger edition with the same ARM toolchain as upstream's
+# Dockerfile, runs the host tests, and publishes the image with the web
+# flasher page (web/index.html) on GitHub Pages.
+
+on:
+  push:
+    branches: [messenger]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: messenger-pages
+  cancel-in-progress: true
+
+env:
+  ARM_GCC_VERSION: 13.3.rel1
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: ARM toolchain
+        run: |
+          set -e
+          TARBALL="arm-gnu-toolchain-${ARM_GCC_VERSION}-x86_64-arm-none-eabi.tar.xz"
+          curl -fsSL -o "$RUNNER_TEMP/tc.tar.xz" \
+            "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/${ARM_GCC_VERSION}/binrel/${TARBALL}"
+          mkdir -p "$RUNNER_TEMP/tc"
+          tar -xf "$RUNNER_TEMP/tc.tar.xz" -C "$RUNNER_TEMP/tc" --strip-components=1
+          echo "$RUNNER_TEMP/tc/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build
+
+      - name: Host tests
+        run: App/messenger/test/run.sh "$RUNNER_TEMP/tests"
+
+      - name: Build
+        run: |
+          arm-none-eabi-gcc --version | head -1
+          cmake --preset Messenger
+          cmake --build --preset Messenger
+
+      - name: Site
+        run: |
+          set -e
+          mkdir -p site
+          BIN=build/Messenger/f4hwn.messenger.bin
+          cp "$BIN" site/
+          cp App/messenger/screens.png site/
+          SHA=$(sha256sum "$BIN" | cut -d' ' -f1)
+          echo "$SHA  f4hwn.messenger.bin" > site/f4hwn.messenger.bin.sha256
+          sed -e "s/__COMMIT__/${GITHUB_SHA::8}/" \
+              -e "s/__DATE__/$(date -u +%Y-%m-%d)/" \
+              -e "s/__SHA256__/${SHA}/" web/index.html > site/index.html
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: f4hwn.messenger
+          path: build/Messenger/f4hwn.messenger.bin
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

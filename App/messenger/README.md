@@ -24,6 +24,13 @@ station, or to everyone in your channel.
 
 ## Build and flash
 
+**From the browser:** the
+[web flasher](https://technikweber.github.io/uv-k1-k5v3-firmware-custom/) opens
+UV Studio with the latest build of this branch already loaded (GitHub Actions
+builds it with the same toolchain as upstream, after the host tests pass).
+
+**Yourself:**
+
 ```
 cmake --preset Messenger
 cmake --build --preset Messenger

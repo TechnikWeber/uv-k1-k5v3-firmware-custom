@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APRS Messenger Flasher</title>
+<meta name="description" content="Flash the APRS messenger edition of the F4HWN firmware onto a Quansheng UV-K1 or UV-K5 V3 from the browser.">
+<style>
+  :root {
+    --bg: #f6f7f4; --fg: #1d2421; --muted: #5d6a63; --card: #ffffff; --line: #d9ded9;
+    --accent: #2f6f4f; --accent-fg: #ffffff; --warn-bg: #fff4e0; --warn-line: #e3a73a;
+    --lcd: #98ba84;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141816; --fg: #e5ebe7; --muted: #9aa7a0; --card: #1c211f; --line: #2c3430;
+      --accent: #5fb488; --accent-fg: #0e1411; --warn-bg: #2b2414; --warn-line: #b8862f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 32px 0 8px; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  .warn { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 10px;
+          padding: 12px 16px; margin: 20px 0; }
+  .btn { display: inline-block; background: var(--accent); color: var(--accent-fg); text-decoration: none;
+         font-weight: 600; padding: 12px 20px; border-radius: 8px; margin: 8px 8px 0 0; }
+  .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  ol { padding-left: 1.3em; }
+  ol li { margin: 6px 0; }
+  img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); background: #282828; }
+  code { font-size: 0.92em; }
+  .meta { color: var(--muted); font-size: 0.88rem; margin-top: 12px; word-break: break-all; }
+  footer { color: var(--muted); font-size: 0.88rem; margin-top: 40px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>APRS Messenger for UV-K1 / UV-K5 V3</h1>
+  <p class="sub">The F4HWN Fusion firmware with background APRS messaging: mailbox, channels,
+    multi-tap typing, optional encryption where it is allowed.</p>
+
+  <div class="warn">
+    <strong>Alpha.</strong> Built and tested on a computer; the parts that drive the radio
+    hardware have not run on a radio yet. Transmitting APRS needs an amateur radio licence.
+    Encryption is forbidden on amateur bands; elsewhere follow your country's rules.
+  </div>
+
+  <img src="screens.png" alt="The messages screens: setup, mailbox, channel, chat, writing and encryption">
+
+  <h2>Flash it from the browser</h2>
+  <div class="card">
+    <ol>
+      <li><strong>Back up the calibration first</strong> (once per radio): flash the official
+        Fusion firmware, then <a href="https://armel.github.io/uvstudio/#dump-calib">dump the
+        calibration</a> in UV Studio and keep the file, named after the radio's serial number.</li>
+      <li>Connect the radio with a data USB cable and put it into <strong>DFU mode</strong>;
+        UV Studio shows how.</li>
+      <li>Open UV Studio with this firmware already loaded, then select <em>Flash Firmware</em>
+        and the radio's serial port.</li>
+    </ol>
+    <a class="btn" id="flash" href="#">Open UV Studio with the Messenger firmware</a>
+    <a class="btn secondary" href="f4hwn.messenger.bin" download>Download .bin</a>
+    <div class="meta">Build __COMMIT__ from __DATE__ &middot; SHA-256 __SHA256__</div>
+  </div>
+  <p>Chrome, Edge, Opera or Firefox 151+ on a computer (Web Serial). Flashing goes through the
+    radio's bootloader, which is never overwritten; the calibration stays in its own flash
+    sector. Back to stock: restore the calibration file, or use UV Studio's factory reset for
+    the UV-K1 / UV-K5 V3.</p>
+
+  <h2>After flashing</h2>
+  <ol>
+    <li>Menu &rarr; a side key setting (<code>F1Shrt</code> &hellip; <code>M Long</code>) &rarr;
+      <strong>MESSAGES</strong>.</li>
+    <li>Press it: enter your callsign, switch the messenger ON.</li>
+    <li>Tune a VFO to 144.800 MHz FM (IARU Region 1) and leave it there.</li>
+  </ol>
+  <p>Keys, channels, encryption and the bench tests:
+    <a href="https://github.com/TechnikWeber/uv-k1-k5v3-firmware-custom/tree/messenger/App/messenger">user guide</a>.</p>
+
+  <footer>
+    <a href="https://github.com/TechnikWeber/uv-k1-k5v3-firmware-custom">Source</a> (Apache 2.0),
+    a fork of the <a href="https://github.com/armel/uv-k1-k5v3-firmware-custom">F4HWN firmware</a>
+    by Armel F4HWN and muzkr. Flashing by
+    <a href="https://armel.github.io/uvstudio/">UV Studio</a>. Not endorsed by them.
+  </footer>
+</main>
+<script>
+  // UV Studio loads a firmware from ?fw=<url> and opens the flash view with #flash.
+  const bin = new URL("f4hwn.messenger.bin", window.location.href).href;
+  document.getElementById("flash").href =
+    "https://armel.github.io/uvstudio/?fw=" + encodeURIComponent(bin) + "#flash";
+</script>
+</body>
+</html>

@@ -27,7 +27,9 @@ answer them later, typing on the number keys.
   off by default, refused on amateur bands.
 - **Status beacon** (no position), so iGates know where to route your messages.
 
-Build with `cmake --preset Messenger && cmake --build --preset Messenger`.
+**Flash from the browser:** [technikweber.github.io/uv-k1-k5v3-firmware-custom](https://technikweber.github.io/uv-k1-k5v3-firmware-custom/)
+(opens UV Studio with the latest build). Or build it yourself with
+`cmake --preset Messenger && cmake --build --preset Messenger`.
 User guide, keys and bench tests: [App/messenger/README.md](App/messenger/README.md).
 Design: [App/messenger/DESIGN.md](App/messenger/DESIGN.md).
 
