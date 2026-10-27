@@ -280,7 +280,7 @@ static bool wait_bit(void)
     return false;                                 /* the timer does not run: stop */
 }
 
-msg_tx_result_t msg_hw_transmit(VFO_Info_t *vfo, const uint8_t *frame, uint16_t len)
+msg_tx_result_t msg_hw_transmit(struct VFO_Info_t *vfo, const uint8_t *frame, uint16_t len)
 {
     if (vfo->Modulation != MODULATION_FM)
         return MSG_TX_LOCKED;

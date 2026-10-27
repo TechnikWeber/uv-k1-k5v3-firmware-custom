@@ -24,7 +24,8 @@
 #include <stdint.h>
 
 #include "msg_port.h"
-#include "radio.h"
+
+struct VFO_Info_t;                 /* radio.h */
 
 typedef struct {
     uint16_t load_pm;          /* demodulator share of the CPU, per mille (average) */
@@ -45,6 +46,6 @@ void            msg_hw_resume_adc(void);
 
 /* One frame on vfo's TX frequency, blocking. The capture is stopped and
  * restarted around it; the radio registers are restored afterwards. */
-msg_tx_result_t msg_hw_transmit(VFO_Info_t *vfo, const uint8_t *frame, uint16_t len);
+msg_tx_result_t msg_hw_transmit(struct VFO_Info_t *vfo, const uint8_t *frame, uint16_t len);
 
 #endif

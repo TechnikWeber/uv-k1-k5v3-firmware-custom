@@ -60,6 +60,21 @@ Paland, licensed under the MIT License. Its license is included at:
 
   App/external/printf/LICENSE
 
+APRS messenger fork
+-------------------
+
+The "Messenger" edition (github.com/TechnikWeber/uv-k1-k5v3-firmware-custom,
+branch messenger) adds background APRS messaging by Philipp Weber (DL4PW):
+the files in App/messenger/, the "Messenger" preset in CMakePresets.json, and
+short hooks under #ifdef ENABLE_MESSENGER in App/CMakeLists.txt,
+App/app/action.c, App/app/app.c, App/board.c, App/main.c, App/scheduler.c,
+App/settings.h, App/ui/menu.c, App/ui/status.c, App/ui/ui.c and App/ui/ui.h.
+
+Its AFSK demodulator (App/messenger/aprs_demod.c) is derived from the APRS RX
+overlay app by Armel / F4HWN (App/apps/aprsrx), and its transmitter and PA4
+audio capture follow the APRS TX app and the overlay services of the same
+project.
+
 License and endorsement notice
 ------------------------------
 

@@ -193,13 +193,20 @@ bool msg_port_take_frame(uint8_t *buf, uint16_t *len)
     return aprs_demod_take(buf, len);
 }
 
+/* With squelch 0 the squelch is always open: then only the decoder tells
+ * whether the channel is busy. */
+static bool squelch_busy(void)
+{
+    return g_SquelchLost && gEeprom.SQUELCH_LEVEL != 0;
+}
+
 bool msg_port_channel_clear(void)
 {
     return aprs_vfo() != NULL
         && (int32_t)(msg_port_ms() - gBusyUntil) >= 0
         && gCurrentFunction == FUNCTION_FOREGROUND
         && !gPttIsPressed
-        && !g_SquelchLost
+        && !squelch_busy()
         && !scanning();
 }
 
@@ -249,7 +256,7 @@ void MSG_TimeSlice10ms(void)
         msg_hw_capture_stop();
 
     if (msg_hw_capture_running() && rx_on_aprs()) {
-        if (g_SquelchLost || aprs_demod_busy())
+        if (squelch_busy() || aprs_demod_busy())
             gBusyUntil = now + BUSY_HOLD_MS;
 
         /* A key beep leaves the BK4829 AF output muted until the next

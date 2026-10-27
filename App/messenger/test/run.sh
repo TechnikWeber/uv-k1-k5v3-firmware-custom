@@ -20,6 +20,12 @@ build test_mailbox   "$HERE/test_mailbox.c"   "$SRC/mailbox.c"
 build test_messenger "$HERE/test_messenger.c" "$SRC/messenger.c" "$SRC/mailbox.c" \
                      "$SRC/aprs_ax25.c" "$SRC/aprs_msg.c"
 build test_t9        "$HERE/test_t9.c"        "$SRC/t9.c"
+# the screens, with the firmware's fonts (PNGs: render_lcd.py OUTDIR/screens)
+"$CC" -std=gnu11 -Wall -Wextra -Werror -g -O1 -DENABLE_MESSENGER -DENABLE_FEAT_F4HWN \
+      -I "$HERE/sim" -I "$SRC/.." -o "$OUT/ui_sim" "$HERE/ui_sim.c" "$SRC/msg_ui.c" \
+      "$SRC/messenger.c" "$SRC/mailbox.c" "$SRC/aprs_ax25.c" "$SRC/aprs_msg.c" "$SRC/t9.c" \
+      "$SRC/../font.c"
+mkdir -p "$OUT/screens"
 
 if [[ ! -f "$OUT/audio/cases.txt" ]]; then
     python3 "$HERE/gen_audio.py" "$OUT/audio" > /dev/null
@@ -32,6 +38,7 @@ fail=0
 "$OUT/test_mailbox"            || fail=1
 "$OUT/test_messenger"          || fail=1
 "$OUT/test_t9"                 || fail=1
+"$OUT/ui_sim" "$OUT/screens"   || fail=1
 
 if [[ $fail -eq 0 ]]; then echo "all messenger tests passed"; else echo "TESTS FAILED"; fi
 exit $fail

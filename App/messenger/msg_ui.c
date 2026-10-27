@@ -150,17 +150,18 @@ static void popup(const char *text)
     gUpdateDisplay = true;
 }
 
+/* a dark box over lines 2-4 with the text inverted, a light margin around */
 static void draw_popup(void)
 {
     for (uint8_t line = 2; line <= 4; line++)
-        memset(gFrameBuffer[line] + 4, 0, LCD_WIDTH - 8u);
+        memset(gFrameBuffer[line], 0, LCD_WIDTH);
     const uint8_t len = (uint8_t)strlen(gPopup);
     const uint8_t x = (uint8_t)((LCD_WIDTH - len * 7u) / 2u);
     print(gPopup, x, 3);
-    for (uint8_t xx = 4; xx < LCD_WIDTH - 4u; xx++) {
-        gFrameBuffer[2][xx] ^= 0xF0u;
+    for (uint8_t xx = 6; xx < LCD_WIDTH - 6u; xx++) {
+        gFrameBuffer[2][xx] = 0xE0u;
         gFrameBuffer[3][xx] ^= 0xFFu;
-        gFrameBuffer[4][xx] ^= 0x0Fu;
+        gFrameBuffer[4][xx] = 0x07u;
     }
 }
 
@@ -169,7 +170,7 @@ static void draw_popup(void)
 static char mark_of(int16_t slot, const mbx_rec_t *r)
 {
     if (r->dir == MBX_DIR_IN)
-        return (r->flags & MBX_F_READ) ? ' ' : '*';
+        return (r->flags & MBX_F_READ) ? '*' : ' ';   /* bit still set: unread */
     if (MSG_SlotPending(slot, NULL))
         return '>';
     if (!(r->flags & MBX_F_DELIVERED))

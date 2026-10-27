@@ -1,166 +1,152 @@
 # APRS messenger: design
 
-Status: draft, 2026-10-27. Nothing of this is built yet. Target hardware:
-UV-K1 and UV-K5 V3 (PY32F071 + BK4829), base preset `Fusion`.
+Status (2026-10-27): implemented, host-tested, not yet run on a radio.
+Target: UV-K1 and UV-K5 V3 (PY32F071 + BK4829), preset `Messenger` = `Fusion`
+plus `ENABLE_MESSENGER`, minus `ENABLE_SPECTRUM`. User guide: [README.md](README.md).
 
 ## Goal
 
-The radio sits in a pocket and behaves as usual (voice channel, FM broadcast
-radio). In the background it decodes APRS on 144.800 MHz. A message addressed to
-the own callsign is acknowledged automatically, stored in a mailbox in the
-external flash, announced with a short beep and an envelope icon. The user reads
-it later and answers with T9. Outgoing messages are retried until acknowledged.
+The radio sits in a pocket and works as usual (voice channel, FM broadcast
+radio). In the background it decodes APRS on 144.800 MHz. A message for the own
+callsign is acknowledged automatically, stored in a mailbox in the external
+flash, announced with a beep and an envelope icon. The user reads it later and
+answers with multi-tap. Outgoing messages are retried until acknowledged.
 
-Standard APRS (APRS 1.0.1 messages, `{id` acknowledgements, reply-ack) keeps the
-messages compatible with every APRS station, APRSdroid, aprs.fi and the
-digipeater / iGate / APRS-IS network.
+Standard APRS (APRS 1.0.1 messages, `{id` acks, reply-acks, third-party frames
+from iGates) keeps it compatible with every APRS station, APRSdroid, aprs.fi and
+the digipeater / iGate / APRS-IS network. An own protocol would have none of
+that infrastructure, so it could only reach as far as one radio hears another.
 
 ## Why resident firmware, not an overlay app
 
-Overlay apps are modal: while an app runs, the normal radio is suspended, and
-the app is discarded when it exits (`App/apps/app_api.h`). Background reception
-therefore has to live in the resident firmware. The existing apps
-`aprsrx`, `aprstx` and `aprsedit` are the reference for the demodulator, the AFSK
-generator and the multi-tap editor; code taken from them keeps its Apache 2.0
-header and is credited in `NOTICE`.
+Overlay apps are modal: while one runs, the normal radio is suspended, and the
+app is discarded when it exits (`App/apps/app_api.h`). Background reception has
+to live in the resident firmware. The overlay apps `aprsrx`, `aprstx` and
+`aprsedit` by Armel F4HWN were the reference for the demodulator, the AFSK
+keying and the PA4 audio path; the derived code keeps their Apache 2.0 notice
+and is credited in `NOTICE`.
 
-Do not use anything from the stock firmware dumps or the decompiled stock code
-in `armel/k1-teardown/openocd/`: that is Quansheng's code, not open source.
+Nothing is taken from the stock firmware dumps or the decompiled stock code in
+`armel/k1-teardown/openocd/`: that is Quansheng's code, not open source.
 
-## Building blocks
+## Files
 
-### 1. Audio capture (new, the core change)
-
-`aprsrx` samples by busy-waiting on the cycle counter (`af_capture_sample`, one
-blocking conversion per 104 µs). Resident code cannot block like that.
-
-Plan: a free timer (TIM3 or TIM15; TIM6 is voice, TIM7 is backlight) triggers
-ADC1 on PA4 at 9.6 kHz, DMA writes into a circular buffer of 256 × uint16
-(512 B, 26.7 ms). The DMA half/full interrupt runs at the lowest priority and
-feeds 128 samples to the demodulator. So the main loop, SPI-flash writes and
-display updates can stall for up to ~13 ms without losing samples.
-
-Budget: 48 MHz / 9.6 kHz = 5000 cycles per sample. The 3-slicer demodulator
-must stay well below that; measure it with `cycles_48mhz` before deciding on 1
-or 3 slicers.
-
-Shared resources to solve:
-
-- **ADC1** also measures the battery. Today `APP_AfCaptureYieldAdc()` hands the
-  ADC back for one conversion. In the resident version, insert the battery
-  conversion between two DMA blocks (or use an injected channel if the PY32 ADC
-  offers one).
-- **PA4** is the voice DAC pin, biased by DAC1 while capturing. `ENABLE_VOICE` is
-  off in `Fusion`, so there is no conflict there.
-
-### 2. Demodulator and frame filter
-
-Port of `aprsrx`: DC removal, band-pass, I/Q correlators for 1200 / 2200 Hz,
-per-tone AGC, slicers with DPLL, NRZI, HDLC, CRC-16/X.25, UI-frame check.
-
-On top of it a filter that keeps only what the messenger needs:
-
-- messages `:DL4PW    :text{id` addressed to the own callsign (with or without
-  SSID, as configured) → mailbox + ack;
-- acks / rejects for messages in the outbox → mark delivered;
-- everything else is dropped (no station list in the first version).
-
-Duplicate check by (source, message id) over the last few minutes, because the
-sender retries and several digipeaters repeat the same frame.
-
-RAM: one frame buffer (330 B), demodulator state (~200 B), DMA buffer (512 B),
-dedupe table (~100 B). Fusion leaves ~4 KiB of RAM beyond its 1 KiB stack and
-512 B heap.
-
-### 3. Transmitter
-
-Port of `aprstx`: the BK4829 tone generator (REG_70 / REG_71) switches between
-1200 and 2200 Hz at each NRZI transition. A frame of ~100 bytes takes ~1 s on the
-air. Blocking for that second is acceptable, like a short PTT press, but only:
-
-- when the channel is free (no carrier, squelch closed),
-- not while the user is transmitting or the radio is receiving voice,
-- with a random delay of 0.5 to 3 s first, so two radios do not collide.
-
-Sent frames: acks (immediately after a received message), own messages with
-retries, the periodic beacon.
-
-### 4. Mailbox in the external flash
-
-The PY25Q16 map is in `App/driver/mb_flash.h`. Free space today is the
-"expansion reserve" between the app slots (end 0x162000) and the Sonic 4K
-reserve (0x1DE000). Proposal: **0x1CE000 to 0x1DDFFF, 64 KiB, 16 sectors**, at
-the top of the reserve, as far as possible from where upstream adds app slots.
-Before using it, ask upstream to reserve it officially.
-
-Records of 128 bytes (header, timestamp, source, message id, up to 67
-characters, flags: unread / read / outbox / delivered), appended as a log; a
-sector is erased when the log wraps. Capacity: ~500 messages. Power-off safe:
-a record counts only once its commit byte is written.
-
-### 5. User interface
-
-- Status bar: envelope icon while unread mail exists.
-- New message: short beep (respects the beep setting), optional backlight
-  pulse.
-- Mailbox screen: inbox / outbox, newest first, unread in bold; open, delete,
-  reply.
-- Editor: T9 multi-tap from `aprsedit` (letters, digits, a few punctuation
-  marks), up to 67 characters, recipient field with the last callsigns as
-  suggestions.
-- Settings menu: messenger on/off, callsign + SSID, beacon interval and type
-  (status only, or position typed in by hand; the radio has no GPS), path
-  (`WIDE1-1` or `WIDE1-1,WIDE2-1`), beep on/off.
-
-### 6. Beacon
-
-iGates route a message from APRS-IS to RF only if they heard the recipient on
-RF recently. The radio therefore sends a beacon at a fixed interval
-(default 30 min, minimum 10 min). Status-only by default, so no position leaves
-the radio unless the user enters one.
-
-### 7. Operating modes
-
-| Mode | APRS reception | Notes |
+| File | Role | Host test |
 |---|---|---|
-| Pocket mode: VFO on 144.800 | continuous | most reliable, voice squelch stays closed for data |
-| Dual watch: voice channel + 144.800 | partial | frames are lost while the other VFO is watched; retries make up for some of it |
-| FM broadcast radio + APRS | continuous, if the audio paths are separate | BK1080 has its own path; check on the bench that broadcast audio does not reach PA4 |
+| `aprs_ax25.c` | AX.25 UI frames, addresses, FCS | `test_proto` |
+| `aprs_msg.c` | APRS messages, acks, rejects, reply-acks, third-party, umlauts | `test_proto` |
+| `aprs_demod.c` | Bell 202 demodulator + HDLC, block-wise (port of aprsrx) | `test_demod` (simulated audio, loopback) |
+| `aprs_afsk.c` | TX bit stream: flags, bit stuffing | `test_demod` |
+| `mailbox.c` | message log in the external flash | `test_mailbox` (simulated NOR) |
+| `messenger.c` | settings, acks, outbox and retries, beacon, TX scheduler | `test_messenger` |
+| `t9.c` | multi-tap text entry | `test_t9` |
+| `msg_ui.c` | the messages screens | `ui_sim` (screens as images) |
+| `msg_hw.c` | TIM3/ADC/DMA capture, AFSK transmitter | radio only |
+| `msg_port.c` | glue: time, flash, carrier sense, beep, hooks | radio only |
+| `msg_fw.h` | the only header the F4HWN code includes | |
 
-APRS frames must never open the speaker: the decoder works on PA4, before the
-amplifier, with the speaker muted.
+Hooks in the F4HWN code, all under `#ifdef ENABLE_MESSENGER`: `main.c` (init),
+`scheduler.c` (10 ms clock), `app/app.c` (10 ms task, key table, silent RX,
+power save), `board.c` (battery ADC), `app/action.c` + `settings.h` +
+`ui/menu.c` (action `MESSAGES` = 25), `ui/ui.c` + `ui/ui.h` (`DISPLAY_MESSENGER`),
+`ui/status.c` (envelope).
 
-### 8. Power saving
+## Receive path
 
-Battery save puts the BK4829 to sleep for `BATTERY_SAVE × 100 ms`, and the F4HWN
-deep sleep for up to several seconds. An APRS preamble is often only 200 to
-300 ms. While the messenger is on, the sleep time is capped (target: 100 ms
-sleep, wake on carrier). Measure the current draw with and without the
-messenger.
+TIM3 (free; TIM6 is voice, TIM7 backlight) triggers ADC1 on PA4 at 9.6 kHz.
+DMA1 channel 1 (free) writes a circular buffer of 256 samples; its half and
+full interrupts (priority 3, the lowest) hand 128 samples (13.3 ms) to the
+demodulator. The main loop, flash writes and the display may stall for up to
+13 ms without losing samples; the interrupt counts it when it was late (`OV`).
 
-## Flash budget
+PA4 is held at mid-scale by the DAC with its output buffer off, as the EPIRB
+406 lab found necessary. The battery measurement borrows the ADC: the capture
+stops the timer, switches channel and DMA off for one conversion, and resumes.
 
-`Fusion` today: 106 388 of 118 KiB (88 %), RAM 12 160 of 16 KiB. Estimate for
-the messenger: 8 to 12 KiB of code. If it does not fit, the `Messenger` preset
-drops `ENABLE_SPECTRUM` first.
+The demodulator is the aprsrx one (DC removal, band-pass, sliding 1200/2200 Hz
+correlators, per-tone AGC, 3 slicers with DPLL, NRZI, HDLC, FCS, UI check). On
+the same simulated audio it decides frame by frame like the Python reference
+model (`apps/aprsrx/test/model_rx.py`). Frames are limited to 200 bytes (a
+message frame stays below ~170); a one-frame slot hands them to the main loop.
 
-## Order of work
+The capture runs while the messenger is on and a VFO is tuned to the APRS
+frequency. Two firmware behaviours needed handling:
 
-1. New preset `Messenger` (= Fusion), builds unchanged.
-2. Timer + ADC + DMA capture, measure level and CPU load on the radio
-   (debug output over the USB serial port).
-3. Demodulator port, receive frames in the background and log them over USB.
-4. Message filter, mailbox in flash, beep and envelope icon.
-5. Transmitter, automatic acks.
-6. Mailbox screen and T9 editor, sending own messages with retries.
-7. Beacon, settings menu, power saving.
-8. Field test between the two V3 radios, then via digipeater / iGate.
+- **The BK4829 AF output is muted after every key beep** (and after other
+  tones) until the next reception. The messenger switches it back to FM every
+  100 ms while the radio idles on the APRS frequency; with the FM radio
+  playing, only while the squelch is open, so receiver noise stays unheard.
+- **An APRS burst opens the squelch**, which normally starts a reception:
+  speaker on, FM radio interrupted. `MSG_IsSilentRx()` keeps the radio in the
+  foreground instead (`CheckForIncoming`); only dual watch is held on the APRS
+  VFO until the burst ends. With *APRS audio* on, nothing changes.
 
-## Bench tests that need the radios
+Power save is blocked while a VFO is on the APRS frequency: a sleeping BK4829
+hears nothing, and many stations send only 200-300 ms of preamble.
 
-- Does FM broadcast audio leak into PA4?
-- Demodulator CPU load inside the interrupt, with USB and display active.
-- Battery measurement while capturing.
-- Current draw: plain standby vs messenger on.
-- First frames from a real station (APRSdroid + KISS TNC app on the second
-  radio is the easiest test sender).
+## Transmit path
+
+Like the APRS TX app: `RADIO_SetTxParameters()` on the APRS VFO (gCurrentVfo and
+gRxVfo point to it for the call, so frequency, power, bandwidth and compander
+are that VFO's; the compander is then forced off and CTCSS/DCS cleared), the
+BK4829 tone generator on at level 66, REG_71 switched between 1200 and 2200 Hz
+at each NRZI transition. Bit timing: TIM3 at exactly 1200 Hz, polled (a bit
+that never comes aborts the frame instead of hanging). 40 flags of preamble
+(267 ms), 3 tail flags; a 100-byte frame takes ~1 s, during which the main loop
+waits. Then `RADIO_SetupRegisters(true)` restores reception and the FM radio
+audio, and the capture restarts.
+
+TX is refused like PTT is: TX lock outside the allowed bands, battery too low
+or too high, non-FM modulation, serial configuration in progress.
+
+## Messenger logic
+
+- **Incoming message** for the own call (SSID must match): stored, beep, ack
+  queued if it carries a number. A copy within 20 s (another digipeater) is
+  ignored; a repeat later than that (the sender's retry, our ack got lost) is
+  acknowledged again but not stored again (15 min window, 16 entries).
+- **Acks / rejects** mark the outbox entry; a late ack after the last retry
+  still marks the record. Acks from another SSID of the same call count.
+- **Outbox:** up to 4 messages waiting for an ack. 5 transmissions, 30, 60, 120,
+  240 s apart, then 120 s for the last ack, then failed. Without an APRS VFO a
+  try is not used up (retried every 30 s). Message numbers 1-999, stored with
+  the settings.
+- **Beacon:** status frame `>text`, 20 s after switching on, then every
+  10/20/30/60 min (default 30). No position.
+- **Scheduler:** the channel must be clear (APRS VFO, squelch closed or squelch
+  0, no preamble in the decoder, 1.5 s since the last activity, no RX/TX/PTT/
+  scan), then a random 0.7-3 s wait. At least 3 s between own frames; a token
+  bucket allows 6 at once, then one per 30 s. Order: acks, messages, beacon.
+- **Destination** `APZK5M` (APZ = experimental), path `WIDE1-1,WIDE2-1` by
+  default.
+
+## Flash
+
+External flash (map in `App/driver/mb_flash.h`): **0x1CE000-0x1DDFFF, 64 KiB**,
+the top of the free expansion reserve, below the Sonic 4K reserve. Sector 0
+holds the settings as a log of 64-byte records (an erase every 64 saves);
+sectors 1-15 the mailbox, 480 records of 128 bytes. A record is written into
+erased flash with its commit byte last; state changes (read, delivered,
+failed, deleted) only clear bits. When the log wraps, the oldest sector is
+erased (32 messages). Power-loss cases and a region full of garbage are in
+`test_mailbox`. If upstream ever claims this area, the mailbox would lose its
+contents but stays safe (CRC per record).
+
+## Budget
+
+| | Fusion | Messenger |
+|---|---|---|
+| Flash | 106 400 B (88 %) | 114 928 B (95 %) |
+| RAM | 12 160 B (74 %) | 13 888 B (85 %) |
+
+The messenger is ~17 KB of code (screens 5 KB, logic 3 KB, demodulator 1.2 KB);
+the spectrum analyser (~9 KB) was dropped to make room. RAM: 3 slicers with
+200-byte buffers, 512-byte DMA buffer, one frame slot. Worst stack depth of the
+messenger ~700 bytes (`-fstack-usage`).
+
+## Open points for the bench
+
+See the bench tests in [README.md](README.md#bench-tests). The unknowns:
+FM radio audio on PA4, decoder load with USB and display active, the battery
+reading during capture, current draw, the level of the AF output at volume
+settings, and whether the BK4829 mutes its AF output below the squelch.

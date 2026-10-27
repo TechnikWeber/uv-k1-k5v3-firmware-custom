@@ -1,32 +1,36 @@
 ## This fork: APRS messenger in your pocket
 
 <p>
-  <img src="https://img.shields.io/badge/status-proof%20of%20concept-lightgrey" alt="status: proof of concept">
+  <img src="https://img.shields.io/badge/status-alpha%20(untested%20on%20a%20radio)-orange" alt="status: alpha, untested on a radio">
   <img src="https://img.shields.io/badge/platform-UV--K1%20%7C%20UV--K5%20V3-blue" alt="platform: UV-K1 | UV-K5 V3">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license: Apache-2.0"></a>
 </p>
 
 Send and receive APRS text messages without a phone or a computer. The radio
-listens for APRS in the background, beeps when a message for your callsign
-arrives and keeps it in a mailbox. You read and answer it later, typing with T9.
+listens for APRS in the background while it works as usual, acknowledges
+messages for your callsign, beeps and keeps them in a mailbox. You read and
+answer them later, typing on the number keys.
 
-**Planned, nothing of it is built yet:**
+![The messages screens](App/messenger/screens.png)
 
-- **Background reception:** the APRS decoder runs in the resident firmware, not
-  as an overlay app, so the radio works normally while it listens.
-- **Mailbox:** inbox and outbox in the external flash, kept across power-off;
-  an envelope icon in the status bar, a short beep for new mail.
-- **Standard APRS messaging:** automatic acknowledgements, retries until the
-  other side acknowledges, messages reach other stations through digipeaters,
-  iGates and APRS-IS.
-- **T9 input** for writing and answering messages.
-- **Periodic beacon** (position or status only), so iGates know where to route
-  messages for you.
+- **Background reception:** the APRS decoder runs in the resident firmware
+  (timer-triggered ADC with DMA), not as an overlay app; bursts stay silent and
+  do not interrupt the FM radio.
+- **Mailbox** in the external flash, kept across power-off; envelope icon and a
+  short beep for new mail.
+- **Standard APRS messaging:** automatic acks, retries until acknowledged,
+  reply-acks, messages from the Internet through iGates.
+- **Multi-tap text entry** on the number keys.
+- **Status beacon** (no position), so iGates know where to route your messages.
 
-How it will work: [App/messenger/DESIGN.md](App/messenger/DESIGN.md).
-Branch `messenger` holds this work. `main` follows the upstream
-[F4HWN Fusion firmware](https://github.com/armel/uv-k1-k5v3-firmware-custom)
-unchanged. Transmitting APRS needs an amateur radio licence.
+Build with `cmake --preset Messenger && cmake --build --preset Messenger`.
+User guide, keys and bench tests: [App/messenger/README.md](App/messenger/README.md).
+Design: [App/messenger/DESIGN.md](App/messenger/DESIGN.md).
+
+The hardware parts have not run on a radio yet; everything else has host tests
+(`App/messenger/test/run.sh`). Transmitting APRS needs an amateur radio licence.
+Branch `messenger` holds this work; `main` follows the upstream
+[F4HWN Fusion firmware](https://github.com/armel/uv-k1-k5v3-firmware-custom).
 
 Everything below is the upstream README.
 
