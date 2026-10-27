@@ -1,3 +1,36 @@
+## This fork: APRS messenger in your pocket
+
+<p>
+  <img src="https://img.shields.io/badge/status-proof%20of%20concept-lightgrey" alt="status: proof of concept">
+  <img src="https://img.shields.io/badge/platform-UV--K1%20%7C%20UV--K5%20V3-blue" alt="platform: UV-K1 | UV-K5 V3">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="license: Apache-2.0"></a>
+</p>
+
+Send and receive APRS text messages without a phone or a computer. The radio
+listens for APRS in the background, beeps when a message for your callsign
+arrives and keeps it in a mailbox. You read and answer it later, typing with T9.
+
+**Planned, nothing of it is built yet:**
+
+- **Background reception:** the APRS decoder runs in the resident firmware, not
+  as an overlay app, so the radio works normally while it listens.
+- **Mailbox:** inbox and outbox in the external flash, kept across power-off;
+  an envelope icon in the status bar, a short beep for new mail.
+- **Standard APRS messaging:** automatic acknowledgements, retries until the
+  other side acknowledges, messages reach other stations through digipeaters,
+  iGates and APRS-IS.
+- **T9 input** for writing and answering messages.
+- **Periodic beacon** (position or status only), so iGates know where to route
+  messages for you.
+
+Branch `messenger` holds this work. `main` follows the upstream
+[F4HWN Fusion firmware](https://github.com/armel/uv-k1-k5v3-firmware-custom)
+unchanged. Transmitting APRS needs an amateur radio licence.
+
+Everything below is the upstream README.
+
+---
+
 # Stats
 
 ![Alt](https://repobeats.axiom.co/api/embed/ecdd86aa536b716f088339a0c5ee734558f78c28.svg "Repobeats analytics image")
