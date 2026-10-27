@@ -23,6 +23,7 @@ arrives and keeps it in a mailbox. You read and answer it later, typing with T9.
 - **Periodic beacon** (position or status only), so iGates know where to route
   messages for you.
 
+How it will work: [App/messenger/DESIGN.md](App/messenger/DESIGN.md).
 Branch `messenger` holds this work. `main` follows the upstream
 [F4HWN Fusion firmware](https://github.com/armel/uv-k1-k5v3-firmware-custom)
 unchanged. Transmitting APRS needs an amateur radio licence.
