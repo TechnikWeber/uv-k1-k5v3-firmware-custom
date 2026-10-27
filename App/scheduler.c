@@ -15,6 +15,9 @@
  */
 
 #include "scheduler.h"
+#ifdef ENABLE_MESSENGER
+    #include "messenger/msg_fw.h"
+#endif
 #include "app/chFrScanner.h"
 #ifdef ENABLE_FMRADIO_EMBEDDED
     #include "app/fm.h"
@@ -55,6 +58,10 @@ uint32_t SCHEDULER_GetTick10ms(void)
 void SysTick_Handler(void)
 {
     gGlobalSysTickCounter++;
+
+#ifdef ENABLE_MESSENGER
+    MSG_SysTick10ms();
+#endif
     
     gNextTimeslice = true;
 

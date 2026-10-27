@@ -46,6 +46,9 @@
 #endif
 #include "ui/ui.h"
 #include "ui/status.h"
+#ifdef ENABLE_MESSENGER
+    #include "messenger/msg_fw.h"
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
 #ifndef ENABLE_FEAT_F4HWN_DEBUG
@@ -367,6 +370,22 @@ void UI_DisplayStatus()
     }
 
     UI_DrawStatusBattery(line, str);
+
+#ifdef ENABLE_MESSENGER
+    // Envelope: unread messages. After the lock/F/mute icon, left of the
+    // battery text.
+    if (MSG_HasUnread()) {
+        static const uint8_t BITMAP_Mail[9] = {0x7E, 0x46, 0x4A, 0x52, 0x62, 0x52, 0x4A, 0x46, 0x7E};
+        unsigned int limit = LCD_WIDTH - sizeof(BITMAP_BatteryLevel1) - 1u;
+        if (gSetting_battery_text == 1 || gSetting_battery_text == 2)
+            limit -= 7u * strlen(str);
+        limit -= sizeof(BITMAP_Mail);
+        unsigned int mx = src ? x + 2u + size : x + 1u;
+        if (mx > limit)
+            mx = limit;
+        memcpy(line + mx, BITMAP_Mail, sizeof(BITMAP_Mail));
+    }
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_MENU_CAT
     if (gScreenToDisplay == DISPLAY_MENU) {

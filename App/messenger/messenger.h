@@ -78,6 +78,8 @@ msg_send_result_t  MSG_Resend(int16_t slot);
 
 /* Messages waiting for an ack, frames waiting to go out. */
 uint8_t            MSG_OutboxCount(void);
+/* This outgoing record is still being sent: transmissions so far in *tries. */
+bool               MSG_SlotPending(int16_t slot, uint8_t *tries);
 bool               MSG_TxPending(void);
 /* Last transmit problem, MSG_TX_OK once a frame went out. */
 msg_tx_result_t    MSG_LastTxResult(void);

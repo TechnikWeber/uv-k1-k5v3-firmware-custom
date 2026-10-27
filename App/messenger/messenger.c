@@ -459,6 +459,17 @@ uint8_t MSG_OutboxCount(void)
     return n;
 }
 
+bool MSG_SlotPending(int16_t slot, uint8_t *tries)
+{
+    for (uint8_t i = 0; i < MSG_OUTBOX_MAX; i++)
+        if (gOut[i].active && gOut[i].slot == slot) {
+            if (tries)
+                *tries = gOut[i].tries;
+            return true;
+        }
+    return false;
+}
+
 msg_tx_result_t MSG_LastTxResult(void) { return gLastResult; }
 uint16_t        MSG_FramesHeard(void)  { return gHeard; }
 uint16_t        MSG_FramesSent(void)   { return gSent; }

@@ -317,6 +317,29 @@ if(ENABLE_FEAT_F4HWN_MENU_CAT AND NOT ENABLE_FEAT_F4HWN)
     message(FATAL_ERROR "ENABLE_FEAT_F4HWN_MENU_CAT requires ENABLE_FEAT_F4HWN.")
 endif()
 
+# ---- MESSENGER FORK (github.com/TechnikWeber/uv-k1-k5v3-firmware-custom) ----
+
+# Background APRS messaging: demodulator on the PA4 audio, mailbox in the
+# external flash, multi-tap editor. See messenger/DESIGN.md.
+enable_feature(ENABLE_MESSENGER
+    messenger/aprs_afsk.c
+    messenger/aprs_ax25.c
+    messenger/aprs_demod.c
+    messenger/aprs_msg.c
+    messenger/mailbox.c
+    messenger/messenger.c
+    messenger/msg_hw.c
+    messenger/msg_port.c
+    messenger/msg_ui.c
+    messenger/t9.c
+)
+if(ENABLE_MESSENGER AND ENABLE_VOICE)
+    message(FATAL_ERROR "ENABLE_MESSENGER needs PA4 for the RX audio: it cannot be combined with ENABLE_VOICE.")
+endif()
+if(ENABLE_MESSENGER AND ENABLE_FEAT_F4HWN_OVERLAY_APPS)
+    message(FATAL_ERROR "ENABLE_MESSENGER and the overlay apps both use the PA4 audio capture; build them apart.")
+endif()
+
 # ---- DEBUGGING ----
 
 enable_feature(ENABLE_AGC_SHOW_DATA)

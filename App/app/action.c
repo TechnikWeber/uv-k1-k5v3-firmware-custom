@@ -51,6 +51,9 @@
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     #include "app/rxtx_log.h"
 #endif
+#ifdef ENABLE_MESSENGER
+    #include "messenger/msg_fw.h"
+#endif
 #if defined(ENABLE_FEAT_F4HWN_FOXHUNT) || defined(ENABLE_FEAT_F4HWN_BEACON) || defined(ENABLE_FEAT_F4HWN_OVERLAY_APPS)
     #include "app/foxhunt.h"
 #endif
@@ -135,6 +138,9 @@ void (*const action_opt_table[ACTION_OPT_LEN])(void) = {
 #endif
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_APPS
     [ACTION_OPT_TONECALL] = &ACTION_ToneCall,
+#endif
+#ifdef ENABLE_MESSENGER
+    [ACTION_OPT_MESSAGES] = &MSG_OpenScreen,
 #endif
 };
 

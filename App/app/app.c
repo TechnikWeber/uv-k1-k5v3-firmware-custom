@@ -80,6 +80,9 @@
 #include "ui/menu.h"
 #include "ui/status.h"
 #include "ui/ui.h"
+#ifdef ENABLE_MESSENGER
+    #include "messenger/msg_fw.h"
+#endif
 #include "ui/welcome.h"
 
 #ifdef ENABLE_FEAT_F4HWN_K5VIEWER
@@ -129,6 +132,10 @@ void (*const ProcessKeysFunctions[])(KEY_Code_t Key, bool bKeyPressed, bool bKey
 
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     [DISPLAY_RXTX_LOG] = &RXTX_LOG_ProcessKeys,
+#endif
+
+#ifdef ENABLE_MESSENGER
+    [DISPLAY_MESSENGER] = &MSG_ProcessKeys,
 #endif
 };
 
@@ -387,6 +394,19 @@ static void CheckForIncoming(void)
     // Normal FM listening (FM_SCAN_OFF) still yields to channel signals as before.
     if (gFmRadioMode && gFM_ScanState != FM_SCAN_OFF)
         return;
+#endif
+
+#ifdef ENABLE_MESSENGER
+    // An APRS burst with the APRS audio off: the decoder hears it in the
+    // background; the radio stays in the foreground (no speaker, the FM
+    // radio plays on). Dual watch holds on this VFO until the burst ends.
+    if (MSG_IsSilentRx()) {
+        if (gEeprom.DUAL_WATCH != DUAL_WATCH_OFF) {
+            gDualWatchCountdown_10ms = dual_watch_count_after_rx_10ms;
+            gScheduleDualWatch       = false;
+        }
+        return;
+    }
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_LOGO_SAV
@@ -1598,6 +1618,9 @@ void APP_Update(void)
             || gScanStateDir != SCAN_OFF
             || gCssBackgroundScan
             || gScreenToDisplay != DISPLAY_MAIN
+#ifdef ENABLE_MESSENGER
+            || MSG_BlocksPowerSave()    // the APRS preamble must not be slept through
+#endif
 #ifdef ENABLE_FMRADIO_EMBEDDED
             || gFmRadioMode
 #endif
@@ -1871,6 +1894,10 @@ void APP_TimeSlice10ms(void)
 
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     RXTX_LOG_Task10ms();
+#endif
+
+#ifdef ENABLE_MESSENGER
+    MSG_TimeSlice10ms();
 #endif
 
     BACKLIGHT_Update();

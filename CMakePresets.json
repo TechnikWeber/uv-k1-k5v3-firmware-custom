@@ -159,6 +159,16 @@
             }
         },
         {
+            "name": "Messenger",
+            "inherits": "Fusion",
+            "cacheVariables": {
+                "ENABLE_MESSENGER": true,
+                "ENABLE_SPECTRUM": false,
+                "EDITION_STRING": "Messenger",
+                "TARGET": "f4hwn.messenger"
+            }
+        },
+        {
             "name": "FieldOps",
             "inherits": "Fusion",
             "cacheVariables": {
@@ -287,6 +297,10 @@
         {
             "name": "Fusion",
             "configurePreset": "Fusion"
+        },
+        {
+            "name": "Messenger",
+            "configurePreset": "Messenger"
         },
         {
             "name": "Transfer",

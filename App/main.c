@@ -23,6 +23,9 @@
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     #include "app/rxtx_log.h"
 #endif
+#ifdef ENABLE_MESSENGER
+    #include "messenger/msg_fw.h"
+#endif
 #include "misc.h"
 #include "radio.h"
 #include "settings.h"
@@ -338,6 +341,10 @@ void Main(void)
         }
     #endif
         
+#ifdef ENABLE_MESSENGER
+    MSG_Init();
+#endif
+
     while (true) {
         APP_Update();
 

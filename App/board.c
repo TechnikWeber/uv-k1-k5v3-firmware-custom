@@ -24,6 +24,9 @@
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_APPS
     #include "apps/app_overlay.h"
 #endif
+#ifdef ENABLE_MESSENGER
+    #include "messenger/msg_fw.h"
+#endif
 #include "py32f071_ll_bus.h"
 #include "py32f071_ll_gpio.h"
 #include "py32f071_ll_rcc.h"
@@ -181,6 +184,9 @@ void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent)
      * channel back for this conversion, whoever asks for it. */
     const bool capture = APP_AfCaptureYieldAdc();
 #endif
+#ifdef ENABLE_MESSENGER
+    const bool msgCapture = MSG_CaptureYieldAdc();
+#endif
     LL_ADC_REG_StartConversionSWStart(ADC1);
     while (!LL_ADC_IsActiveFlag_EOS(ADC1))
         ;
@@ -191,6 +197,10 @@ void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent)
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_APPS
     if (capture)
         APP_AfCaptureResumeAdc();
+#endif
+#ifdef ENABLE_MESSENGER
+    if (msgCapture)
+        MSG_CaptureResumeAdc();
 #endif
 }
 
