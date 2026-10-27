@@ -164,6 +164,8 @@
             "cacheVariables": {
                 "ENABLE_MESSENGER": true,
                 "ENABLE_SPECTRUM": false,
+                "ENABLE_FEAT_F4HWN_RXTX_LOG": false,
+                "ENABLE_FEAT_F4HWN_RXTX_LOG_K5VIEWER": false,
                 "EDITION_STRING": "Messenger",
                 "TARGET": "f4hwn.messenger"
             }

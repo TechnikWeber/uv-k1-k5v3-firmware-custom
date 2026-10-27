@@ -275,6 +275,29 @@ int main(int argc, char **argv)
 
     key(KEY_STAR);                     /* new: recipient, F = channel */
     shot("09_new_to");
+    key_long(KEY_EXIT);
+
+    /* encryption, on a licence-free frequency */
+    key(KEY_F);                        /* setup */
+    for (int i = 0; i < 6; i++)
+        key(KEY_DOWN);                 /* Freq */
+    for (int i = 0; i < 6; i++)
+        key(KEY_F);                    /* presets ... 446.00625 */
+    key(KEY_DOWN); key(KEY_DOWN);      /* Key */
+    key(KEY_MENU);
+    type("4 33 44 33 444 6 0 444 7777 8 0 4 33 44 33 444 6 ");   /* Geheim ist geheim */
+    shot("10_key");
+    key(KEY_MENU);                     /* saved */
+    run_ms(2000);
+    key(KEY_UP);                       /* Encrypt */
+    key(KEY_MENU);                     /* ON */
+    run_ms(2000);
+    shot("11_setup_crypto");
+    key(KEY_EXIT);
+    key(KEY_STAR);
+    key(KEY_F);                        /* to the channel */
+    type("222 666 6 444 66 4 ");       /* Coming */
+    shot("12_write_encrypted");
 
     return TEST_REPORT("ui_sim");
 }

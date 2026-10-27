@@ -2,7 +2,7 @@
 
 Status (2026-10-27): implemented, host-tested, not yet run on a radio.
 Target: UV-K1 and UV-K5 V3 (PY32F071 + BK4829), preset `Messenger` = `Fusion`
-plus `ENABLE_MESSENGER`, minus `ENABLE_SPECTRUM`. User guide: [README.md](README.md).
+plus `ENABLE_MESSENGER`, minus `ENABLE_SPECTRUM` and the RF log. User guide: [README.md](README.md).
 
 ## Goal
 
@@ -128,6 +128,27 @@ or too high, non-FM modulation, serial configuration in progress.
 - **Destination** `APZK5M` (APZ = experimental), path `WIDE1-1,WIDE2-1` by
   default.
 
+## Encryption
+
+Optional, for bands where encryption is allowed; refused on 144-146 and
+430-440 MHz. Encrypt-then-MAC with standard primitives that are small on a
+Cortex-M0 (`msg_crypto.c`, 1.9 KB): ChaCha20 (RFC 8439) and SipHash-2-4, both
+checked against their published test vectors in `test_crypto`.
+
+- **Key:** 32 bytes from the passphrase: the passphrase as a ChaCha20 key, then
+  4096 times key = first half of the next block (a guess costs 4096 blocks).
+  Stored in the settings record (now 128 bytes); the passphrase is not.
+- **MAC key:** first 16 bytes of a ChaCha20 block under a fixed domain nonce.
+- **Nonce:** 4 random bytes (sent) | SipHash(macKey, sender) (8 bytes), so two
+  stations with the same key never share a nonce; a fresh one per transmission.
+- **Tag:** SipHash-2-4 over sender, addressee, nonce and ciphertext, 32 bits.
+- **Wire:** `@@` + base64 (no padding) of nonce | ciphertext | tag. 40 plain
+  characters give 66 characters, under the 67 APRS allows. The `{id` and acks
+  stay in the clear.
+- **Mailbox:** plain text with the flag `MBX_F_ENCRYPTED`; encryption happens
+  at each transmission, and a record that can no longer be encrypted is marked
+  failed instead of being sent in the clear.
+
 ## Flash
 
 External flash (map in `App/driver/mb_flash.h`): **0x1CE000-0x1DDFFF, 64 KiB**,
@@ -144,11 +165,12 @@ contents but stays safe (CRC per record).
 
 | | Fusion | Messenger |
 |---|---|---|
-| Flash | 106 400 B (88 %) | 117 240 B (97 %) |
-| RAM | 12 160 B (74 %) | 13 952 B (85 %) |
+| Flash | 106 400 B (88 %) | 115 196 B (95 %) |
+| RAM | 12 160 B (74 %) | 13 728 B (84 %) |
 
-The messenger is ~19 KB of code (screens 5 KB, logic 3 KB, demodulator 1.2 KB);
-the spectrum analyser (~9 KB) was dropped to make room. RAM: 3 slicers with
+The messenger is ~24 KB of code (screens 7 KB, logic 4.6 KB, crypto 1.9 KB, demodulator 1.2 KB);
+the spectrum analyser (~9 KB) and the RF log (~5 KB) were dropped to make
+room. RAM: 3 slicers with
 200-byte buffers, 512-byte DMA buffer, one frame slot. Worst stack depth of the
 messenger ~700 bytes (`-fstack-usage`).
 

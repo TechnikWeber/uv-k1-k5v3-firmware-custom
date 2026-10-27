@@ -5,6 +5,7 @@
 #include "flash_sim.h"
 #include "../mailbox.h"
 #include "../messenger.h"
+#include "../msg_crypto.h"
 #include "../msg_port.h"
 
 /* ------------------------------------------------------------- mock port -- */
@@ -420,6 +421,120 @@ static void test_broadcast(void)
     CHECK_INT(sim_violations, 0);
 }
 
+static void rx_encrypted(const uint8_t *key, const char *src, const char *to, const char *plain,
+                         const char *suffix)
+{
+    char wire[80], info[120];
+    mc_encrypt(key, src, to, 0xCAFE0000u + (uint32_t)rx_n, plain, wire, sizeof wire);
+    snprintf(info, sizeof info, ":%-9s:%s%s", to, wire, suffix);
+    rx(src, info);
+}
+
+static void test_encryption(void)
+{
+    reset_all();
+    msg_config_t c = *MSG_GetConfig();
+    c.freq = 44600625u;                /* PMR446 channel 1: not an amateur band */
+    strcpy(c.group, "WEBER");
+    MSG_SetConfig(&c);
+    CHECK(!MSG_EncryptActive());
+
+    /* encryption needs a key */
+    c = *MSG_GetConfig();
+    c.encrypt = 1;
+    MSG_SetConfig(&c);                 /* refused: no key */
+    CHECK(!MSG_GetConfig()->encrypt);
+    MSG_SetKey("Familie Weber 2026!");
+    CHECK(MSG_GetConfig()->has_key);
+    c = *MSG_GetConfig();
+    c.encrypt = 1;
+    MSG_SetConfig(&c);
+    CHECK(MSG_EncryptActive());
+
+    uint8_t key[MC_KEY_LEN], wrong[MC_KEY_LEN];
+    mc_kdf("Familie Weber 2026!", key);
+    mc_kdf("anderer Schluessel", wrong);
+    CHECK(memcmp(key, MSG_GetConfig()->key, MC_KEY_LEN) == 0);
+
+    /* sending: the text on the air is encrypted, the number is not */
+    CHECK_INT(MSG_Send("DL1ABC", "Treffen 18 Uhr"), MSG_SEND_OK);
+    const int16_t s = mbx_newest();
+    mbx_rec_t r;
+    CHECK(mbx_read(s, &r));
+    CHECK_STR(r.text, "Treffen 18 Uhr");   /* the mailbox keeps the plain text */
+    CHECK(!(r.flags & MBX_F_ENCRYPTED));
+    run_ms(4000);
+    CHECK_INT(tx_n, 1);
+    CHECK(strstr(tx_log[0], "::DL1ABC   :@@") != NULL);
+    CHECK(strstr(tx_log[0], "Treffen") == NULL);
+    CHECK(strstr(tx_log[0], "{1") != NULL);
+    /* the recipient's side can read it */
+    const char *wire = strstr(tx_log[0], ":@@") + 1;
+    char body[80], plain[64];
+    strcpy(body, wire);
+    *strchr(body, '{') = '\0';
+    CHECK(mc_decrypt(key, "DL4PW-7", "DL1ABC", body, plain, sizeof plain));
+    CHECK_STR(plain, "Treffen 18 Uhr");
+    rx("DL1ABC", ":DL4PW-7  :ack1");   /* acks stay in the clear */
+    run_ms(100);
+    CHECK(mbx_read(s, &r));
+    CHECK(!(r.flags & MBX_F_DELIVERED));
+
+    /* receiving: decrypted, acked in the clear */
+    rx_encrypted(key, "DL1ABC-9", "DL4PW-7", "Bin unterwegs", "{77");
+    run_ms(4000);
+    CHECK(mbx_read(mbx_newest(), &r));
+    CHECK_STR(r.text, "Bin unterwegs");
+    CHECK(!(r.flags & MBX_F_ENCRYPTED));
+    CHECK_STR(tx_log[tx_n - 1], "DL4PW-7>APZK5M,WIDE1-1,WIDE2-1::DL1ABC-9 :ack77");
+
+    /* another key: kept as a notice, still acknowledged */
+    rx_encrypted(wrong, "DL2XYZ", "DL4PW-7", "fremd", "{5");
+    run_ms(4000);
+    CHECK(mbx_read(mbx_newest(), &r));
+    CHECK_STR(r.text, "(encrypted, other key)");
+    CHECK_STR(tx_log[tx_n - 1], "DL4PW-7>APZK5M,WIDE1-1,WIDE2-1::DL2XYZ   :ack5");
+
+    /* channel broadcast, both ways */
+    rx_encrypted(key, "DL5ZZZ", "BLN0WEBER", "Essen ist fertig", "");
+    run_ms(100);
+    CHECK(mbx_read(mbx_newest(), &r));
+    CHECK_STR(r.text, "Essen ist fertig");
+    CHECK_INT(r.dir, MBX_DIR_BC_IN);
+    CHECK_INT(MSG_SendBroadcast("WEBER", "Komme gleich"), MSG_SEND_OK);
+    run_ms(5000);
+    CHECK(strstr(tx_log[tx_n - 1], "::BLN") != NULL);
+    CHECK(strstr(tx_log[tx_n - 1], "WEBER:@@") != NULL);
+    CHECK(strstr(tx_log[tx_n - 1], "Komme") == NULL);
+
+    /* limits */
+    CHECK_INT(MSG_Send("DL1ABC", "Dieser Text ist laenger als vierzig Zeichen!"), MSG_SEND_TOO_LONG);
+
+    /* switched to an amateur band: refused, and nothing waiting goes out plain */
+    CHECK_INT(MSG_Send("DL1ABC", "noch offen"), MSG_SEND_OK);
+    const int16_t open = mbx_newest();
+    c = *MSG_GetConfig();
+    c.freq = 14480000u;
+    MSG_SetConfig(&c);
+    CHECK(!MSG_EncryptActive());
+    const int sent = tx_n;
+    run_ms(10000);
+    for (int i = sent; i < tx_n; i++)
+        CHECK(strstr(tx_log[i], "noch offen") == NULL);
+    CHECK(mbx_read(open, &r));
+    CHECK(!(r.flags & MBX_F_FAILED));
+    CHECK_INT(MSG_Send("DL1ABC", "x"), MSG_SEND_HAM_BAND);
+    CHECK_INT(MSG_SendBroadcast("WEBER", "x"), MSG_SEND_HAM_BAND);
+
+    /* key removed: encryption off, plain sending works again */
+    MSG_SetKey("");
+    CHECK(!MSG_GetConfig()->encrypt);
+    CHECK_INT(MSG_Send("DL1ABC", "wieder offen"), MSG_SEND_OK);
+    run_ms(5000);
+    CHECK(strstr(tx_log[tx_n - 1], ":wieder offen{") != NULL);
+    CHECK_INT(sim_violations, 0);
+}
+
 int main(void)
 {
     test_config();
@@ -429,5 +544,6 @@ int main(void)
     test_channel_and_errors();
     test_beacon_and_limits();
     test_broadcast();
+    test_encryption();
     return TEST_REPORT("messenger");
 }

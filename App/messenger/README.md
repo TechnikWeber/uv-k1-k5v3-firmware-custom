@@ -34,7 +34,8 @@ Fusion release, with [UV Studio](https://armel.github.io/uvstudio/), and back up
 the calibration data first.
 
 The Messenger edition is Fusion plus the messenger, minus the spectrum
-analyser (flash: 97 % of 118 KiB, RAM: 85 % of 16 KiB).
+analyser and the RF log, to make room (flash: 95 % of 118 KiB, RAM: 84 % of
+16 KiB).
 
 ### Calibration and going back
 
@@ -99,6 +100,8 @@ Messages hold up to 67 characters (the APRS limit).
 | `*` | new, not read |
 | (blank) | read; or a broadcast you sent |
 | `#` before the text | a broadcast in a channel |
+
+Reading an encrypted message shows `ENC` in front of the key hints.
 | `>` | sending: waits for the ack, retries after 30, 60, 120 and 240 s |
 | `+` | delivered (acknowledged) |
 | `!` | no ack after 5 transmissions, or rejected: MENU sends it again |
@@ -129,6 +132,42 @@ Everything on APRS is readable by everyone, private messages included:
 amateur radio does not allow encryption. Choose a channel name others are
 unlikely to use, but do not treat it as private.
 
+## Encryption (only where it is allowed)
+
+> [!CAUTION]
+> **Encryption is forbidden in amateur radio.** Use it only on frequencies and
+> with equipment where the rules of your country allow encrypted data, for
+> example some licence-free bands. Those rules (frequencies, power, antenna,
+> type approval, data transmission) differ from country to country; checking
+> and following them is **your own responsibility**. Encryption is off by
+> default.
+
+The firmware refuses to send encrypted on 144-146 MHz and 430-440 MHz (the
+IARU Region 1 amateur bands); other countries' allocations are not detected.
+A message that waits for its retries is never sent in the clear instead: if
+encryption becomes impossible (key removed, frequency moved to an amateur
+band), it is marked `!` and stays unsent.
+
+**Setup:**
+
+1. *Freq*: MENU types a frequency in (digits only, three for the MHz:
+   `44600625` = 446.00625 MHz), F steps through presets (the APRS frequencies
+   and PMR446 channel 1). Tune a VFO to the same frequency.
+2. *Key*: a passphrase, the same on every radio of the group, at least 16
+   characters. Only the derived key is stored; the passphrase is not kept.
+   An empty passphrase removes the key.
+3. *Encrypt*: ON. It shows `HAM: OFF` while the frequency is in an amateur band.
+
+**What it protects:** the text of private messages and channel broadcasts,
+with ChaCha20 (RFC 8439) and a 32-bit SipHash-2-4 tag, so a wrong key or a
+changed message is detected. A message cannot be replayed under another
+sender or to another recipient. **What it does not hide:** callsigns, the
+channel name, message numbers, acks and timing: APRS needs them to deliver.
+Encrypted text is limited to 40 characters (base64 must still fit the
+67-character APRS limit). A message for you with another key shows as
+*(encrypted, other key)*. Anyone with your radio can read its key from the
+flash.
+
 ## How it behaves
 
 - **APRS stays silent.** With *APRS audio* off (default), a burst on the APRS
@@ -158,7 +197,9 @@ unlikely to use, but do not treat it as private.
 | Channel | your group for broadcasts, 1-5 letters/digits; empty = none |
 | Public BLN | also keep public bulletins (OFF / ON) |
 | Beep | ALL (private and channel), PRIVATE (only private), OFF |
-| Freq | 144.800, 144.390, 144.640, 144.660, 145.175, 145.825 |
+| Freq | MENU: type in (`14480000` = 144.800); F: presets 144.800, 144.390, 144.640, 144.660, 145.175, 145.825, 446.00625 |
+| Encrypt | OFF / ON (needs a key; never on amateur bands) |
+| Key | passphrase for encryption; `set` / `none` |
 | Path | DIRECT, WIDE1 (WIDE1-1), WIDE1+2 (WIDE1-1,WIDE2-1) |
 | Beacon | OFF, 10, 20, 30, 60 min: a status frame (`>text`), no position |
 | Status | beacon text, up to 20 characters |

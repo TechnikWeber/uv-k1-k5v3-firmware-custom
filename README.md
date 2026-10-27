@@ -23,6 +23,8 @@ answer them later, typing on the number keys.
 - **Channels like Meshtastic:** broadcasts to everyone in your group (APRS
   group bulletins), optional public bulletins, a chat view per station or channel.
 - **Multi-tap text entry** on the number keys; asks for your callsign on first use.
+- **Optional encryption** (ChaCha20 + SipHash) for bands where it is allowed;
+  off by default, refused on amateur bands.
 - **Status beacon** (no position), so iGates know where to route your messages.
 
 Build with `cmake --preset Messenger && cmake --build --preset Messenger`.

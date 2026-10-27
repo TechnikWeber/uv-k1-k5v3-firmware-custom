@@ -44,23 +44,28 @@ typedef enum {
     V_EDIT_CALL,
     V_EDIT_GROUP,
     V_EDIT_STATUS,
+    V_EDIT_FREQ,
+    V_EDIT_KEY,
     V_CONFIRM,
 } view_t;
 
 typedef enum { CONFIRM_DELETE = 0, CONFIRM_CLEAR } confirm_t;
 
 enum {
-    S_ENABLE = 0, S_CALL, S_SSID, S_CHANNEL, S_PUBLIC, S_BEEP, S_FREQ, S_PATH, S_BEACON,
-    S_STATUS, S_AUDIO, S_CLEAR,
+    S_ENABLE = 0, S_CALL, S_SSID, S_CHANNEL, S_PUBLIC, S_BEEP, S_FREQ, S_ENCRYPT, S_KEY,
+    S_PATH, S_BEACON, S_STATUS, S_AUDIO, S_CLEAR,
     S_COUNT
 };
 
 static const char *const SETUP_LABEL[S_COUNT] = {
-    "Messenger", "Call", "SSID", "Channel", "Public BLN", "Beep", "Freq", "Path", "Beacon",
-    "Status", "APRS audio", "Clear mailbox",
+    "Messenger", "Call", "SSID", "Channel", "Public BLN", "Beep", "Freq", "Encrypt", "Key",
+    "Path", "Beacon", "Status", "APRS audio", "Clear mailbox",
 };
 
-static const uint32_t FREQS[] = {14480000u, 14439000u, 14464000u, 14466000u, 14517500u, 14582500u};
+/* APRS in IARU Region 1, North America, China, Japan, Australia, the ISS;
+ * PMR446 channel 1 for licence-free use (rules: see the README) */
+static const uint32_t FREQS[] = {14480000u, 14439000u, 14464000u, 14466000u, 14517500u, 14582500u,
+                                 44600625u};
 #define FREQ_COUNT (sizeof FREQS / sizeof FREQS[0])
 
 static const char *const PATH_TXT[MSG_PATH_COUNT] = {"DIRECT", "WIDE1", "WIDE1+2"};
@@ -134,14 +139,23 @@ static char *put_u(char *o, uint32_t v)
     return o;
 }
 
+/* 10 Hz units -> "144.800" or "446.00625" */
 static void freq_text(uint32_t f, char *out)
 {
     char *o = put_u(out, f / 100000u);
     *o++ = '.';
-    const uint32_t k = (f / 100u) % 1000u;
-    *o++ = (char)('0' + k / 100u);
-    *o++ = (char)('0' + (k / 10u) % 10u);
-    *o++ = (char)('0' + k % 10u);
+    uint32_t k = f % 100000u;
+    uint8_t digits = 5;
+    while (digits > 3u && k % 10u == 0u) {
+        k /= 10u;
+        digits--;
+    }
+    for (uint8_t d = digits; d; d--) {
+        uint32_t p = 1;
+        for (uint8_t i = 1; i < d; i++)
+            p *= 10u;
+        *o++ = (char)('0' + (k / p) % 10u);
+    }
     *o = '\0';
 }
 
@@ -399,7 +413,7 @@ static void draw_read(void)
         print(line, 0, (uint8_t)(1u + i));
     }
 
-    char st[40];
+    char st[48];
     uint8_t tries;
     switch (r.dir) {
     case MBX_DIR_IN:
@@ -435,18 +449,34 @@ static void draw_read(void)
         }
         break;
     }
+    if (!(r.flags & MBX_F_ENCRYPTED)) {           /* "ENC" in front of the hints */
+        memmove(st + 4, st, strlen(st) + 1u);
+        memcpy(st, "ENC ", 4);
+        st[32] = '\0';
+    }
     tiny(st, 0, 6);
 }
 
 /* ------------------------------------------------------- compose ---- */
+
+/* encrypted text must stay shorter to fit an APRS message */
+static uint8_t text_max(void)
+{
+    return MSG_EncryptActive() ? MC_PLAIN_MAX : APRS_TEXT_MAX;
+}
+
+static void open_text(void)
+{
+    t9_init(&gEdit, text_max(), false, NULL);
+    gView = V_TEXT;
+}
 
 static void open_compose(const char *to)
 {
     if (to && to[0]) {
         strncpy(gTo, to, sizeof gTo - 1u);
         gTo[sizeof gTo - 1u] = '\0';
-        t9_init(&gEdit, APRS_TEXT_MAX, false, NULL);
-        gView = V_TEXT;
+        open_text();
     } else {
         gTo[0] = '\0';
         t9_init(&gEdit, AX25_CALL_STR - 1u, true, NULL);
@@ -511,8 +541,8 @@ static void draw_compose(void)
     *o++ = ' ';
     o = put_u(o, gEdit.len);
     *o++ = '/';
-    o = put_u(o, APRS_TEXT_MAX);
-    strcpy(o, "   MENU SEND");
+    o = put_u(o, gEdit.max);
+    strcpy(o, MSG_EncryptActive() ? " ENC  MENU SEND" : "   MENU SEND");
     tiny(hint, 0, 6);
 }
 
@@ -527,6 +557,9 @@ static void send_now(void)
         [MSG_SEND_OUTBOX_FULL] = "Outbox full",
         [MSG_SEND_FLASH]       = "Flash error",
         [MSG_SEND_DISABLED]    = "Messenger off",
+        [MSG_SEND_NO_KEY]      = "Set a key first",
+        [MSG_SEND_HAM_BAND]    = "No crypto on ham",
+        [MSG_SEND_TOO_LONG]    = "Max 40 encrypted",
     };
     msg_send_result_t r;
     if (gTo[0] == '#')                 /* "#GROUP", "#ALL" = public */
@@ -554,6 +587,8 @@ static void setup_value(uint8_t item, char *v)
     case S_PUBLIC:  strcpy(v, c->bulletins ? "ON" : "OFF"); break;
     case S_BEEP:    strcpy(v, BEEP_TXT[c->beep]); break;
     case S_FREQ:    freq_text(c->freq, v); break;
+    case S_ENCRYPT: strcpy(v, !c->encrypt ? "OFF" : MSG_HamBand(c->freq) ? "HAM: OFF" : "ON"); break;
+    case S_KEY:     strcpy(v, c->has_key ? "set" : "none"); break;
     case S_PATH:    strcpy(v, PATH_TXT[c->path]); break;
     case S_BEACON:
         strcpy(v, MSG_BeaconMinutesText(c->beacon));
@@ -642,13 +677,40 @@ static void setup_change(int8_t dir)
         c.beep = (uint8_t)((c.beep + MSG_BEEP_COUNT + dir) % MSG_BEEP_COUNT);
         break;
     case S_FREQ: {
-        uint8_t i = 0;
+        if (dir > 0) {                 /* MENU: type it in */
+            char f[12];
+            freq_text(c.freq, f);
+            char digits[10];
+            uint8_t n = 0;
+            for (const char *s = f; *s && n < 8u; s++)
+                if (*s != '.')
+                    digits[n++] = *s;
+            digits[n] = '\0';
+            t9_init(&gEdit, 8, true, digits);
+            gEdit.mode = T9_MODE_DIGITS;
+            gView = V_EDIT_FREQ;
+            return;
+        }
+        uint8_t i = 0;                 /* F: the next preset */
         while (i < FREQ_COUNT && FREQS[i] != c.freq)
             i++;
-        i = (uint8_t)(i >= FREQ_COUNT ? 0u : (i + FREQ_COUNT + (uint8_t)dir) % FREQ_COUNT);
-        c.freq = FREQS[i];
+        c.freq = FREQS[i + 1u >= FREQ_COUNT ? 0u : i + 1u];
         break;
     }
+    case S_ENCRYPT:
+        if (!c.has_key) {
+            popup("Set a key first");
+            return;
+        }
+        c.encrypt = !c.encrypt;
+        MSG_SetConfig(&c);
+        if (c.encrypt)
+            popup(MSG_HamBand(c.freq) ? "Not on ham bands" : "Mind local rules");
+        return;
+    case S_KEY:
+        t9_init(&gEdit, MC_PASS_MAX, false, NULL);
+        gView = V_EDIT_KEY;
+        return;
     case S_PATH:
         c.path = (uint8_t)((c.path + MSG_PATH_COUNT + dir) % MSG_PATH_COUNT);
         break;
@@ -675,14 +737,20 @@ static void setup_change(int8_t dir)
 
 static void draw_edit_setting(void)
 {
-    static const char *const TITLE[] = {"YOUR CALLSIGN", "CHANNEL", "BEACON STATUS"};
-    static const char *const LABEL[] = {"Without SSID:", "1-5 letters/digits", "Status text:"};
+    static const char *const TITLE[] = {"YOUR CALLSIGN", "CHANNEL", "BEACON STATUS", "FREQUENCY",
+                                        "KEY PASSPHRASE"};
+    static const char *const LABEL[] = {"Without SSID:", "1-5 letters/digits", "Status text:",
+                                        "MHz, no dot:", "Same on all radios"};
     const uint8_t k = (uint8_t)(gView - V_EDIT_CALL);
     title(TITLE[k]);
     print(LABEL[k], 0, 2);
-    draw_editor(3, gView == V_EDIT_STATUS ? 2u : 1u);
+    draw_editor(3, (gView == V_EDIT_STATUS || gView == V_EDIT_KEY) ? 2u : 1u);
     if (gView == V_EDIT_GROUP)
         tiny("EMPTY = NO CHANNEL", 0, 5);
+    if (gView == V_EDIT_FREQ)
+        tiny("14480000 = 144.800", 0, 5);
+    if (gView == V_EDIT_KEY)
+        tiny("16+ CHARS, EMPTY = NO KEY", 0, 5);
     char hint[40] = "MENU SAVE  * ";
     strcat(hint, t9_mode_name(&gEdit));
     tiny(hint, 0, 6);
@@ -713,6 +781,25 @@ static void save_edit_setting(void)
             return;
         }
         strcpy(c.group, gEdit.buf);
+    } else if (gView == V_EDIT_FREQ) {
+        /* "14480000": three digits of MHz, up to five decimals */
+        bool digits = gEdit.len >= 4u && gEdit.buf[0] != '0';
+        for (uint8_t i = 0; i < gEdit.len; i++)
+            digits &= gEdit.buf[i] >= '0' && gEdit.buf[i] <= '9';
+        if (!digits) {
+            popup("e.g. 14480000");
+            return;
+        }
+        uint32_t f = 0;
+        for (uint8_t i = 0; i < 8u; i++)
+            f = f * 10u + (uint32_t)(i < gEdit.len ? gEdit.buf[i] - '0' : 0);
+        c.freq = f;
+    } else if (gView == V_EDIT_KEY) {
+        MSG_SetKey(gEdit.buf);         /* derives the key; the passphrase is not kept */
+        memset(&gEdit, 0, sizeof gEdit);
+        popup(MSG_GetConfig()->has_key ? "Key saved" : "Key removed");
+        open_setup(S_KEY);
+        return;
     } else {
         strcpy(c.status, gEdit.buf);
     }
@@ -720,7 +807,8 @@ static void save_edit_setting(void)
     /* first setup: from the callsign on to "Messenger ON" */
     open_setup(from == V_EDIT_CALL && !c.enabled ? (uint8_t)S_ENABLE
                : from == V_EDIT_CALL ? (uint8_t)S_CALL
-               : from == V_EDIT_GROUP ? (uint8_t)S_CHANNEL : (uint8_t)S_STATUS);
+               : from == V_EDIT_GROUP ? (uint8_t)S_CHANNEL
+               : from == V_EDIT_FREQ ? (uint8_t)S_FREQ : (uint8_t)S_STATUS);
 }
 
 /* -------------------------------------------------------- confirm ---- */
@@ -760,7 +848,9 @@ void MSG_DisplayScreen(void)
     case V_SETUP:       draw_setup(); break;
     case V_EDIT_CALL:
     case V_EDIT_GROUP:
-    case V_EDIT_STATUS: draw_edit_setting(); break;
+    case V_EDIT_STATUS:
+    case V_EDIT_FREQ:
+    case V_EDIT_KEY:    draw_edit_setting(); break;
     case V_CONFIRM:     draw_confirm(); break;
     }
     if (gPopupUntil)
@@ -797,8 +887,7 @@ static void keys_editor(KEY_Code_t key, bool held)
 
 static bool editing(void)
 {
-    return gView == V_TO || gView == V_TEXT || gView == V_EDIT_CALL || gView == V_EDIT_GROUP
-        || gView == V_EDIT_STATUS;
+    return gView == V_TO || gView == V_TEXT || (gView >= V_EDIT_CALL && gView <= V_EDIT_KEY);
 }
 
 static view_t editor_exit(void)
@@ -816,7 +905,9 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         return;                        /* act on press and on repeats */
     const bool held = bKeyHeld;
     const bool repeatable = Key == KEY_UP || Key == KEY_DOWN;
-    if (held && !repeatable && Key != KEY_EXIT)
+    /* A long EXIT only cancels an editor. Its press already acted; outside an
+     * editor the hold must not act again (it would leave the messages screen). */
+    if (held && !repeatable && (Key != KEY_EXIT || !editing()))
         return;
 
     if (gPopupUntil) {                 /* any key closes a popup */
@@ -848,8 +939,7 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         }
         if (gView == V_TO && Key == KEY_F) {       /* to the channel */
             MSG_ChannelName(gTo);
-            t9_init(&gEdit, APRS_TEXT_MAX, false, NULL);
-            gView = V_TEXT;
+            open_text();
             return;
         }
         if (Key == KEY_MENU) {
@@ -861,8 +951,7 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
                     return;
                 }
                 ax25_addr_format(&a, gTo);
-                t9_init(&gEdit, APRS_TEXT_MAX, false, NULL);
-                gView = V_TEXT;
+                open_text();
             } else if (gView == V_TEXT) {
                 send_now();
             } else {

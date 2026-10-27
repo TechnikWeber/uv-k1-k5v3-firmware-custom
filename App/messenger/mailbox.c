@@ -137,10 +137,11 @@ static void recycle_sector(int16_t slot)
     msg_flash_erase(addr);
 }
 
-int16_t mbx_append(uint8_t dir, const char *peer, const char *id, const char *text)
+int16_t mbx_append(uint8_t dir, const char *peer, const char *id, const char *text, uint8_t flags)
 {
     mbx_rec_t r;
     memset(&r, 0xFF, sizeof r);
+    r.flags = (uint8_t)~flags;
     r.dir = dir;
     const size_t tl = strlen(text);
     r.text_len = (uint8_t)(tl > APRS_TEXT_BUF ? APRS_TEXT_BUF : tl);

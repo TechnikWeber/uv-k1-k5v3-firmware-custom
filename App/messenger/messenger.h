@@ -25,6 +25,7 @@
 
 #include "aprs_ax25.h"
 #include "aprs_msg.h"
+#include "msg_crypto.h"
 #include "msg_port.h"
 
 #define MSG_STATUS_LEN    20u
@@ -54,6 +55,9 @@ typedef struct {
     char     status[MSG_STATUS_LEN + 1];/* beacon text                      */
     char     group[MSG_GROUP_LEN + 1];  /* own channel, "" = none           */
     uint8_t  next_bln;                  /* bulletin line 0..9 for the next broadcast */
+    uint8_t  encrypt;                   /* encrypt what is sent (needs a key) */
+    uint8_t  has_key;
+    uint8_t  key[MC_KEY_LEN];           /* derived from the passphrase      */
 } msg_config_t;
 
 typedef enum {
@@ -64,6 +68,9 @@ typedef enum {
     MSG_SEND_OUTBOX_FULL,
     MSG_SEND_FLASH,
     MSG_SEND_DISABLED,
+    MSG_SEND_NO_KEY,                    /* encryption on, no key set        */
+    MSG_SEND_HAM_BAND,                  /* encryption on an amateur band    */
+    MSG_SEND_TOO_LONG,                  /* encrypted text over MC_PLAIN_MAX */
 } msg_send_result_t;
 
 /* Loads the settings and scans the mailbox. */
@@ -96,6 +103,13 @@ msg_tx_result_t    MSG_LastTxResult(void);
 /* Frames heard / transmitted since boot (settings screen). */
 uint16_t           MSG_FramesHeard(void);
 uint16_t           MSG_FramesSent(void);
+
+/* The key from a passphrase ("" removes it and switches encryption off). */
+void               MSG_SetKey(const char *pass);
+/* 144-146 and 430-440 MHz (IARU Region 1): encryption is refused there. */
+bool               MSG_HamBand(uint32_t freq);
+/* Encryption is on and may be used on the APRS frequency. */
+bool               MSG_EncryptActive(void);
 
 /* Exposed for the host tests. */
 void               MSG_ConfigDefaults(msg_config_t *cfg);

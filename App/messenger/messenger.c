@@ -21,10 +21,10 @@
 #include "msg_flash.h"
 
 /* ---- settings: a small log of 64-byte records in the first sector ---- */
-#define CFG_REC        64u
+#define CFG_REC        128u
 #define CFG_SLOTS      (MSG_FLASH_SECTOR / CFG_REC)
 #define CFG_MAGIC      0xC7u
-#define CFG_VERSION    2u
+#define CFG_VERSION    3u
 
 typedef struct {
     uint8_t      magic;
@@ -173,7 +173,7 @@ static bool cfg_valid(const msg_config_t *c)
     if (c->call[0] && !ax25_addr_parse(c->call, &a))
         return false;
     if (!group_valid(c->group) || c->beep >= MSG_BEEP_COUNT || c->bulletins > 1u
-        || c->next_bln > 9u)
+        || c->next_bln > 9u || c->has_key > 1u || c->encrypt > c->has_key)
         return false;
     return c->ssid <= 15u && c->path < MSG_PATH_COUNT && c->beacon < MSG_BEACON_COUNT
         && c->freq >= 1800000u && c->freq <= 130000000u
@@ -245,6 +245,43 @@ bool MSG_MyAddr(ax25_addr_t *out)
         return false;
     out->ssid = gCfg.ssid;
     return true;
+}
+
+void MSG_SetKey(const char *pass)
+{
+    if (pass[0]) {
+        mc_kdf(pass, gCfg.key);
+        gCfg.has_key = 1;
+    } else {
+        memset(gCfg.key, 0, sizeof gCfg.key);
+        gCfg.has_key = 0;
+        gCfg.encrypt = 0;
+    }
+    cfg_save();
+}
+
+bool MSG_HamBand(uint32_t freq)
+{
+    return (freq >= 14400000u && freq <= 14600000u) || (freq >= 43000000u && freq <= 44000000u);
+}
+
+bool MSG_EncryptActive(void)
+{
+    return gCfg.encrypt && gCfg.has_key && !MSG_HamBand(gCfg.freq);
+}
+
+/* why a message cannot be sent the way the settings say, MSG_SEND_OK if it can */
+static msg_send_result_t encrypt_check(const char *text)
+{
+    if (!gCfg.encrypt)
+        return MSG_SEND_OK;
+    if (!gCfg.has_key)
+        return MSG_SEND_NO_KEY;
+    if (MSG_HamBand(gCfg.freq))
+        return MSG_SEND_HAM_BAND;
+    if (strlen(text) > MC_PLAIN_MAX)
+        return MSG_SEND_TOO_LONG;
+    return MSG_SEND_OK;
 }
 
 const char *MSG_BeaconMinutesText(uint8_t beacon)
@@ -354,7 +391,7 @@ static char upper(char c)
 
 /* "BLN" + line (0-9: bulletin, A-Z: announcement) + optional group of up to
  * 5 characters. Returns true when the frame was a bulletin (kept or not). */
-static bool handle_bulletin(const aprs_msg_t *m, const ax25_addr_t *me, uint32_t now)
+static bool handle_bulletin(const aprs_msg_t *m, const ax25_addr_t *me, uint32_t now, uint8_t flags)
 {
     const char *to = m->to;
     if (upper(to[0]) != 'B' || upper(to[1]) != 'L' || upper(to[2]) != 'N' || !to[3])
@@ -387,7 +424,7 @@ static bool handle_bulletin(const aprs_msg_t *m, const ax25_addr_t *me, uint32_t
     strcat(key, group);
     if (seen_check(key, "", m->text, now, BLN_WINDOW_MS) != SEEN_NEW)
         return true;
-    if (mbx_append(MBX_DIR_BC_IN, from, group, m->text) != MBX_NONE)
+    if (mbx_append(MBX_DIR_BC_IN, from, group, m->text, flags) != MBX_NONE)
         msg_port_notify(kind);
     return true;
 }
@@ -405,7 +442,19 @@ static void handle_frame(const uint8_t *buf, uint16_t len, uint32_t now)
 
     aprs_msg_t m;
     aprs_msg_parse(&f, &m);
-    if (m.kind == APRS_MSG_TEXT && handle_bulletin(&m, &me, now))
+    /* encrypted text: decrypted with the key, kept as a notice without one */
+    uint8_t flags = 0;
+    if (m.kind == APRS_MSG_TEXT && mc_is_encrypted(m.text)) {
+        char sender[AX25_CALL_STR];
+        char plain[MC_PLAIN_MAX + 1];
+        ax25_addr_format(&m.from, sender);
+        if (gCfg.has_key && mc_decrypt(gCfg.key, sender, m.to, m.text, plain, sizeof plain))
+            strcpy(m.text, plain);
+        else
+            strcpy(m.text, "(encrypted, other key)");
+        flags = MBX_F_ENCRYPTED;
+    }
+    if (m.kind == APRS_MSG_TEXT && handle_bulletin(&m, &me, now, flags))
         return;
     if (m.kind == APRS_MSG_NONE || !aprs_msg_is_for(&m, &me))
         return;
@@ -423,7 +472,7 @@ static void handle_frame(const uint8_t *buf, uint16_t len, uint32_t now)
         if (m.id[0] && seen != SEEN_COPY)
             queue_ack(from, m.id);
         if (m.text[0] && seen == SEEN_NEW) {
-            if (mbx_append(MBX_DIR_IN, from, m.id, m.text) != MBX_NONE)
+            if (mbx_append(MBX_DIR_IN, from, m.id, m.text, flags) != MBX_NONE)
                 msg_port_notify(MSG_NOTIFY_PRIVATE);
         }
         break;
@@ -452,6 +501,9 @@ msg_send_result_t MSG_Send(const char *to, const char *text)
         return MSG_SEND_BAD_CALL;
     if (!text[0])
         return MSG_SEND_EMPTY;
+    const msg_send_result_t enc = encrypt_check(text);
+    if (enc != MSG_SEND_OK)
+        return enc;
 
     pending_t *p = NULL;
     for (uint8_t i = 0; i < MSG_OUTBOX_MAX && !p; i++)
@@ -483,7 +535,7 @@ msg_send_result_t MSG_Send(const char *to, const char *text)
     gCfg.next_id = (uint16_t)(gCfg.next_id >= 999u ? 1u : gCfg.next_id + 1u);
     cfg_save();
 
-    const int16_t slot = mbx_append(MBX_DIR_OUT, peer, id, clean);
+    const int16_t slot = mbx_append(MBX_DIR_OUT, peer, id, clean, gCfg.encrypt ? MBX_F_ENCRYPTED : 0u);
     if (slot == MBX_NONE)
         return MSG_SEND_FLASH;
 
@@ -540,6 +592,9 @@ msg_send_result_t MSG_SendBroadcast(const char *group, const char *text)
         return MSG_SEND_EMPTY;
     if (!group_valid(group))
         return MSG_SEND_BAD_CALL;
+    const msg_send_result_t enc = encrypt_check(text);
+    if (enc != MSG_SEND_OK)
+        return enc;
     bcast_t *b = !gBc[0].active ? &gBc[0] : !gBc[1].active ? &gBc[1] : NULL;
     if (!b)
         return MSG_SEND_OUTBOX_FULL;
@@ -559,7 +614,8 @@ msg_send_result_t MSG_SendBroadcast(const char *group, const char *text)
     gCfg.next_bln = (uint8_t)((gCfg.next_bln + 1u) % 10u);
     cfg_save();
 
-    const int16_t slot = mbx_append(MBX_DIR_BC_OUT, mine, group, clean);
+    const int16_t slot = mbx_append(MBX_DIR_BC_OUT, mine, group, clean,
+                                    gCfg.encrypt ? MBX_F_ENCRYPTED : 0u);
     if (slot == MBX_NONE)
         return MSG_SEND_FLASH;
     b->active = true;
@@ -647,23 +703,43 @@ static uint16_t build_frame(const char *info, uint16_t info_len)
     return ax25_build_ui(gFrame, sizeof gFrame, &dst, &me, path, npath, info, info_len);
 }
 
+/* The text as it goes on the air: encrypted with a fresh nonce for every
+ * transmission when the record was written encrypted. NULL: it must not be
+ * sent any more (encryption no longer possible: key gone, or now on an
+ * amateur band - it is never sent in the clear instead). */
+static const char *on_air_text(const mbx_rec_t *r, const char *addressee, char *buf, uint16_t max)
+{
+    if (r->flags & MBX_F_ENCRYPTED)
+        return r->text;
+    ax25_addr_t me;
+    char sender[AX25_CALL_STR];
+    if (!gCfg.has_key || MSG_HamBand(gCfg.freq) || !MSG_MyAddr(&me))
+        return NULL;
+    ax25_addr_format(&me, sender);
+    return mc_encrypt(gCfg.key, sender, addressee, msg_port_random(), r->text, buf, max) ? buf : NULL;
+}
+
 static void transmit_one(tx_kind_t kind, pending_t *p, bcast_t *b, uint32_t now)
 {
+    char secret[APRS_TEXT_MAX + 1];
     uint16_t info = 0;
     if (kind == TX_ACK) {
         info = aprs_msg_format_ack(gInfo, sizeof gInfo, gAck[0].peer, gAck[0].id, false);
     } else if (kind == TX_MSG) {
         mbx_rec_t r;
-        if (mbx_read(p->slot, &r))
-            info = aprs_msg_format_text(gInfo, sizeof gInfo, r.peer, r.text, r.id);
-        if (!info) {                   /* the record is gone: give up on it */
+        const char *t = mbx_read(p->slot, &r) ? on_air_text(&r, r.peer, secret, sizeof secret) : NULL;
+        if (t)
+            info = aprs_msg_format_text(gInfo, sizeof gInfo, r.peer, t, r.id);
+        if (!info) {                   /* gone, or no longer sendable: give up on it */
+            mbx_set_flags(p->slot, MBX_F_FAILED);
             p->active = false;
             return;
         }
     } else if (kind == TX_BCAST) {
         mbx_rec_t r;
-        if (mbx_read(b->slot, &r))
-            info = aprs_msg_format_text(gInfo, sizeof gInfo, b->to, r.text, NULL);
+        const char *t = mbx_read(b->slot, &r) ? on_air_text(&r, b->to, secret, sizeof secret) : NULL;
+        if (t)
+            info = aprs_msg_format_text(gInfo, sizeof gInfo, b->to, t, NULL);
         if (!info) {
             b->active = false;
             return;

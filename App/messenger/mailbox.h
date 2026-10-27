@@ -56,6 +56,7 @@
 #define MBX_F_DELIVERED     0x02u   /* outgoing: acknowledged                 */
 #define MBX_F_FAILED        0x04u   /* outgoing: no ack after all retries, or rejected */
 #define MBX_F_DELETED       0x08u
+#define MBX_F_ENCRYPTED     0x10u   /* sent or received encrypted (set at append) */
 
 #define MBX_NONE            (-1)
 
@@ -78,9 +79,10 @@ _Static_assert(sizeof(mbx_rec_t) == MBX_REC_SIZE, "one record per 128 bytes");
 /* Scans the log: next free slot, newest record, unread count. */
 void     mbx_init(void);
 
-/* Appends a record (commit, flags and seq are set here). Returns its slot,
- * MBX_NONE if the flash refused it. */
-int16_t  mbx_append(uint8_t dir, const char *peer, const char *id, const char *text);
+/* Appends a record (commit and seq are set here; flags as given, e.g.
+ * MBX_F_ENCRYPTED, others stay unset). Returns its slot, MBX_NONE if the
+ * flash refused it. */
+int16_t  mbx_append(uint8_t dir, const char *peer, const char *id, const char *text, uint8_t flags);
 
 /* Reads a committed record; false if the slot holds none or its CRC fails. */
 bool     mbx_read(int16_t slot, mbx_rec_t *rec);

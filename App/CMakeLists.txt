@@ -328,6 +328,7 @@ enable_feature(ENABLE_MESSENGER
     messenger/aprs_msg.c
     messenger/mailbox.c
     messenger/messenger.c
+    messenger/msg_crypto.c
     messenger/msg_hw.c
     messenger/msg_port.c
     messenger/msg_ui.c
