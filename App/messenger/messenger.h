@@ -75,6 +75,8 @@ typedef enum {
 
 /* Loads the settings and scans the mailbox. */
 void               MSG_CoreInit(void);
+void MSG_Delete(int16_t slot);
+void MSG_ClearMailbox(void);
 /* Every 10 ms from the main loop. */
 void               MSG_Task(void);
 

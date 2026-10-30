@@ -311,6 +311,10 @@ static void draw_list(void)
         char warn[32] = "NO VFO ON ";
         freq_text(cfg->freq, warn + strlen(warn));
         tiny(warn, 0, 6);
+    } else if (MSG_LastTxResult() == MSG_TX_LOCKED) {
+        tiny("TX BLOCKED: CHECK FM/SIMPLEX/LOCK", 0, 6);
+    } else if (MSG_LastTxResult() == MSG_TX_BATTERY) {
+        tiny("TX BLOCKED: BATTERY", 0, 6);
     } else if (gThread[0]) {
         tiny("MENU READ  * WRITE  EXIT ALL", 0, 6);
     } else {
@@ -1055,13 +1059,13 @@ void MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
     case V_CONFIRM:
         if (Key == KEY_MENU) {
             if (gConfirm == CONFIRM_CLEAR) {
-                mbx_clear();
+                MSG_ClearMailbox();
                 popup("Mailbox cleared");
                 gThread[0] = '\0';
                 list_reset();
                 gView = V_SETUP;
             } else {
-                mbx_set_flags(gSel, MBX_F_DELETED | MBX_F_READ);
+                MSG_Delete(gSel);
                 list_reset();
                 if (gSel == MBX_NONE && gThread[0]) {   /* the chat is empty now */
                     gThread[0] = '\0';
@@ -1085,6 +1089,13 @@ void msg_ui_tick(void)
     if (gScreenToDisplay != DISPLAY_MESSENGER)
         return;
     const uint32_t now = msg_port_ms();
+    if (gView == V_LIST && (gSel == MBX_NONE || gSel == gTop)) {
+        const int16_t latest = newest();
+        if (latest != gTop) {
+            gSel = gTop = latest;
+            gUpdateDisplay = true;
+        }
+    }
     if (editing() && t9_tick(&gEdit, now))
         gUpdateDisplay = true;
     if (gPopupUntil && (int32_t)(now - gPopupUntil) >= 0) {

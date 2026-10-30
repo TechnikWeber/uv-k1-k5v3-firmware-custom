@@ -62,6 +62,7 @@ typedef struct {
     uint8_t  tries;
     int16_t  slot;
     uint32_t due;
+    uint32_t seq;
     char     peer[AX25_CALL_STR];
     char     id[APRS_ID_MAX + 1];
 } pending_t;
@@ -81,6 +82,7 @@ typedef struct {
     uint8_t  sends;
     int16_t  slot;
     uint32_t due;
+    uint32_t seq;
     char     to[APRS_ADDRESSEE_LEN + 1];   /* "BLN3FAMIL" */
 } bcast_t;
 
@@ -444,14 +446,17 @@ static void handle_frame(const uint8_t *buf, uint16_t len, uint32_t now)
     aprs_msg_parse(&f, &m);
     /* encrypted text: decrypted with the key, kept as a notice without one */
     uint8_t flags = 0;
+    bool readable = true;
     if (m.kind == APRS_MSG_TEXT && mc_is_encrypted(m.text)) {
         char sender[AX25_CALL_STR];
         char plain[MC_PLAIN_MAX + 1];
         ax25_addr_format(&m.from, sender);
         if (gCfg.has_key && mc_decrypt(gCfg.key, sender, m.to, m.text, plain, sizeof plain))
             strcpy(m.text, plain);
-        else
+        else {
+            readable = false;
             strcpy(m.text, "(encrypted, other key)");
+        }
         flags = MBX_F_ENCRYPTED;
     }
     if (m.kind == APRS_MSG_TEXT && handle_bulletin(&m, &me, now, flags))
@@ -466,15 +471,22 @@ static void handle_frame(const uint8_t *buf, uint16_t len, uint32_t now)
 
     switch (m.kind) {
     case APRS_MSG_TEXT: {
-        if (m.reply_ack[0])
+        if (readable && m.reply_ack[0])
             outcome(from, m.reply_ack, MBX_F_DELIVERED);
+        /* Roll back deduplication if storage fails, so a retry can recover. */
+        const uint8_t previousNext = gSeenNext;
+        const seen_t previous = gSeen[previousNext];
         const seen_t_kind seen = seen_check(from, m.id, m.text, now, DEDUPE_WINDOW_MS);
-        if (m.id[0] && seen != SEEN_COPY)
-            queue_ack(from, m.id);
         if (m.text[0] && seen == SEEN_NEW) {
-            if (mbx_append(MBX_DIR_IN, from, m.id, m.text, flags) != MBX_NONE)
-                msg_port_notify(MSG_NOTIFY_PRIVATE);
+            if (mbx_append(MBX_DIR_IN, from, m.id, m.text, flags) == MBX_NONE) {
+                gSeenNext = previousNext;
+                gSeen[previousNext] = previous;
+                break;
+            }
+            msg_port_notify(MSG_NOTIFY_PRIVATE);
         }
+        if (readable && m.id[0] && seen != SEEN_COPY)
+            queue_ack(from, m.id);
         break;
     }
     case APRS_MSG_ACK:
@@ -542,6 +554,9 @@ msg_send_result_t MSG_Send(const char *to, const char *text)
     p->active = true;
     p->tries  = 0;
     p->slot   = slot;
+    mbx_rec_t identity;
+    mbx_read(slot, &identity);
+    p->seq = identity.seq;
     p->due    = msg_port_ms();
     strcpy(p->peer, peer);
     strcpy(p->id, id);
@@ -569,6 +584,9 @@ msg_send_result_t MSG_Resend(int16_t slot)
     p->active = true;
     p->tries  = 0;
     p->slot   = slot;
+    mbx_rec_t identity;
+    mbx_read(slot, &identity);
+    p->seq = identity.seq;
     p->due    = msg_port_ms();
     strcpy(p->peer, r.peer);
     strcpy(p->id, r.id);
@@ -621,6 +639,9 @@ msg_send_result_t MSG_SendBroadcast(const char *group, const char *text)
     b->active = true;
     b->sends  = 0;
     b->slot   = slot;
+    mbx_rec_t identity;
+    mbx_read(slot, &identity);
+    b->seq = identity.seq;
     b->due    = msg_port_ms();
     return MSG_SEND_OK;
 }
@@ -719,6 +740,24 @@ static const char *on_air_text(const mbx_rec_t *r, const char *addressee, char *
     return mc_encrypt(gCfg.key, sender, addressee, msg_port_random(), r->text, buf, max) ? buf : NULL;
 }
 
+void MSG_Delete(int16_t slot)
+{
+    for (uint8_t i = 0; i < MSG_OUTBOX_MAX; i++)
+        if (gOut[i].slot == slot) gOut[i].active = false;
+    for (uint8_t i = 0; i < 2; i++)
+        if (gBc[i].slot == slot) gBc[i].active = false;
+    mbx_set_flags(slot, MBX_F_DELETED | MBX_F_READ);
+}
+
+void MSG_ClearMailbox(void)
+{
+    memset(gOut, 0, sizeof gOut);
+    memset(gBc, 0, sizeof gBc);
+    memset(gSeen, 0, sizeof gSeen);
+    gAckCount = 0;
+    mbx_clear();
+}
+
 static void transmit_one(tx_kind_t kind, pending_t *p, bcast_t *b, uint32_t now)
 {
     char secret[APRS_TEXT_MAX + 1];
@@ -727,17 +766,19 @@ static void transmit_one(tx_kind_t kind, pending_t *p, bcast_t *b, uint32_t now)
         info = aprs_msg_format_ack(gInfo, sizeof gInfo, gAck[0].peer, gAck[0].id, false);
     } else if (kind == TX_MSG) {
         mbx_rec_t r;
-        const char *t = mbx_read(p->slot, &r) ? on_air_text(&r, r.peer, secret, sizeof secret) : NULL;
+        const bool valid = mbx_read(p->slot, &r) && r.dir == MBX_DIR_OUT
+            && r.seq == p->seq && (r.flags & MBX_F_DELETED);
+        const char *t = valid ? on_air_text(&r, r.peer, secret, sizeof secret) : NULL;
         if (t)
             info = aprs_msg_format_text(gInfo, sizeof gInfo, r.peer, t, r.id);
         if (!info) {                   /* gone, or no longer sendable: give up on it */
-            mbx_set_flags(p->slot, MBX_F_FAILED);
+            if (valid) mbx_set_flags(p->slot, MBX_F_FAILED);
             p->active = false;
             return;
         }
     } else if (kind == TX_BCAST) {
         mbx_rec_t r;
-        const char *t = mbx_read(b->slot, &r) ? on_air_text(&r, b->to, secret, sizeof secret) : NULL;
+        const char *t = mbx_read(b->slot, &r) && r.dir == MBX_DIR_BC_OUT && r.seq == b->seq && (r.flags & MBX_F_DELETED) ? on_air_text(&r, b->to, secret, sizeof secret) : NULL;
         if (t)
             info = aprs_msg_format_text(gInfo, sizeof gInfo, b->to, t, NULL);
         if (!info) {

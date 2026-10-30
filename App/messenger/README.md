@@ -262,3 +262,27 @@ turns them into PNG files like the one above.
 - Position beacons, a station list.
 
 Design notes: [DESIGN.md](DESIGN.md).
+
+## Receiver sharing and review fixes
+
+For voice plus APRS, set one VFO to the messenger frequency in FM/Wide,
+with zero TX offset and no compander or receive tone filter. Set the other
+VFO to the voice channel, select it as main, and choose MAIN TX / DUAL RX.
+Changing Messenger Freq does not tune either VFO automatically.
+
+There is one voice/APRS receiver. Voice reception and PTT cause APRS gaps.
+Before an automatic transmission the messenger holds the APRS VFO for up to
+six seconds to listen and complete its random channel-access delay, followed
+by a two-second interval without that hold. This can delay voice reception.
+Reception is decoded only on the configured APRS frequency; scanning pauses it.
+A VFO with different RX and TX frequencies is refused for APRS transmissions.
+The mailbox displays TX lock and battery failures.
+
+During broadcast FM listening, dual watch is suspended by the base firmware:
+select the APRS VFO before enabling FM radio. The messenger restores AF mute
+when the burst ends. This audio behavior still requires verification on hardware.
+
+Deleting messages cancels their pending sends; clearing the mailbox cancels
+all message and bulletin sends. Failed storage and unreadable encrypted
+messages do not generate delivery acknowledgements. A wrong-key notice remains
+visible in the mailbox. New arrivals update an open mailbox automatically.

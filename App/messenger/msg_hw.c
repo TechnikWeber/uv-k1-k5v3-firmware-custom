@@ -282,7 +282,7 @@ static bool wait_bit(void)
 
 msg_tx_result_t msg_hw_transmit(struct VFO_Info_t *vfo, const uint8_t *frame, uint16_t len)
 {
-    if (vfo->Modulation != MODULATION_FM)
+    if (vfo->pTX->Frequency != vfo->pRX->Frequency || vfo->Modulation != MODULATION_FM)
         return MSG_TX_LOCKED;
     if (TX_freq_check(vfo->pTX->Frequency) != 0 && vfo->TX_LOCK)
         return MSG_TX_LOCKED;

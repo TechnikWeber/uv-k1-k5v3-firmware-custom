@@ -299,5 +299,13 @@ int main(int argc, char **argv)
     type("222 666 6 444 66 4 ");       /* Coming */
     shot("12_write_encrypted");
 
+    /* Arrival while the empty mailbox is already open must be selectable. */
+    MSG_ClearMailbox();
+    MSG_OpenScreen();
+    rx("DL1ABC", ":DL4PW-7  :live arrival{90");
+    run_ms(100);
+    CHECK_INT(mbx_unread(), 1);
+    key(KEY_MENU);
+    CHECK_INT(mbx_unread(), 0);
     return TEST_REPORT("ui_sim");
 }

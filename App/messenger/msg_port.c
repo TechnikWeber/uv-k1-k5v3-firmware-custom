@@ -50,6 +50,7 @@
 
 static volatile uint32_t gTick10ms;
 static uint32_t gBusyUntil;
+static uint32_t gListenUntil, gListenAfter;
 static uint32_t gRand = 0x6D2B79F5u;
 static bool     gReady;
 static bool     gNotify;
@@ -203,7 +204,7 @@ static bool squelch_busy(void)
 
 bool msg_port_channel_clear(void)
 {
-    return aprs_vfo() != NULL
+    return rx_on_aprs()
         && (int32_t)(msg_port_ms() - gBusyUntil) >= 0
         && gCurrentFunction == FUNCTION_FOREGROUND
         && !gPttIsPressed
@@ -251,10 +252,25 @@ void MSG_TimeSlice10ms(void)
     const msg_config_t *cfg = MSG_GetConfig();
     const uint32_t now = msg_port_ms();
 
-    /* the background capture runs while a VFO sits on the APRS frequency */
-    const bool want = cfg->enabled && aprs_vfo() != NULL && gCurrentFunction != FUNCTION_TRANSMIT;
-    if (want && !msg_hw_capture_running())
+    /* Reserve a continuous APRS listening window before an automatic TX.
+     * The normal dual-watch dwell is shorter than the CSMA holdoff. */
+    if (cfg->enabled && rx_on_aprs() && MSG_TxPending() && !scanning()
+        && gCurrentFunction == FUNCTION_FOREGROUND && !gPttIsPressed) {
+        if ((int32_t)(now - gListenAfter) >= 0) {
+            gListenUntil = now + 6000u;
+            gListenAfter = now + 8000u;
+        }
+        if ((int32_t)(now - gListenUntil) < 0) {
+            gDualWatchCountdown_10ms = 10;
+            gScheduleDualWatch = false;
+        }
+    }
+    /* Decode only the currently tuned APRS channel. */
+    const bool want = cfg->enabled && rx_on_aprs() && !scanning() && gCurrentFunction != FUNCTION_TRANSMIT;
+    if (want && !msg_hw_capture_running()) {
+        gBusyUntil = now + BUSY_HOLD_MS;
         msg_hw_capture_start();
+    }
     else if (!want && msg_hw_capture_running())
         msg_hw_capture_stop();
 
@@ -274,6 +290,10 @@ void MSG_TimeSlice10ms(void)
 #endif
             if (af)
                 BK4819_SetAF(BK4819_AF_FM);
+#ifdef ENABLE_FMRADIO_EMBEDDED
+            else if (gFmRadioMode && gCurrentFunction == FUNCTION_FOREGROUND)
+                BK4819_SetAF(BK4819_AF_MUTE);
+#endif
         }
     }
 

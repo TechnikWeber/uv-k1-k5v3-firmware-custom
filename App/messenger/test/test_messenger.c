@@ -488,12 +488,13 @@ static void test_encryption(void)
     CHECK(!(r.flags & MBX_F_ENCRYPTED));
     CHECK_STR(tx_log[tx_n - 1], "DL4PW-7>APZK5M,WIDE1-1,WIDE2-1::DL1ABC-9 :ack77");
 
-    /* another key: kept as a notice, still acknowledged */
+    /* another key: kept as a notice, never acknowledged */
+    const int beforeWrongKey = tx_n;
     rx_encrypted(wrong, "DL2XYZ", "DL4PW-7", "fremd", "{5");
     run_ms(4000);
     CHECK(mbx_read(mbx_newest(), &r));
     CHECK_STR(r.text, "(encrypted, other key)");
-    CHECK_STR(tx_log[tx_n - 1], "DL4PW-7>APZK5M,WIDE1-1,WIDE2-1::DL2XYZ   :ack5");
+    CHECK_INT(tx_n, beforeWrongKey);
 
     /* channel broadcast, both ways */
     rx_encrypted(key, "DL5ZZZ", "BLN0WEBER", "Essen ist fertig", "");
@@ -535,8 +536,41 @@ static void test_encryption(void)
     CHECK_INT(sim_violations, 0);
 }
 
+static void test_review_regressions(void)
+{
+    reset_all();
+    MSG_Send("DL1ABC", "cancel");
+    MSG_Delete(mbx_newest());
+    run_ms(5000);
+    CHECK_INT(tx_n, 0);
+    CHECK_INT(MSG_OutboxCount(), 0);
+
+    reset_all();
+    MSG_Send("DL1ABC", "old");
+    MSG_SendBroadcast("WEBER", "old broadcast");
+    MSG_ClearMailbox();
+    rx("DL2XYZ", ":DL4PW-7  :incoming{99");
+    run_ms(10000);
+    CHECK_INT(tx_n, 1);
+    CHECK(strstr(tx_log[0], ":ack99") != NULL);
+    CHECK_INT(MSG_OutboxCount(), 0);
+
+    reset_all();
+    sim_drop_programs = 2000;
+    rx("DL1ABC", ":DL4PW-7  :recoverable{23");
+    run_ms(5000);
+    CHECK_INT(mbx_count(), 0);
+    CHECK_INT(tx_n, 0);
+    sim_drop_programs = 0;
+    rx("DL1ABC", ":DL4PW-7  :recoverable{23");
+    run_ms(5000);
+    CHECK_INT(mbx_count(), 1);
+    CHECK_INT(tx_n, 1);
+}
+
 int main(void)
 {
+    test_review_regressions();
     test_config();
     test_receive_and_ack();
     test_send_retries();
